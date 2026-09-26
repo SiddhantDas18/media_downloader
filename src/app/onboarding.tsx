@@ -7,7 +7,7 @@ import { T } from '@/constants/theme';
 import { requestPhotos, updateSettings, useApp } from '@/lib/store';
 
 export default function Onboarding() {
-  const { watchClipboard } = useApp().settings;
+  const { watchClipboard } = useApp((s) => s.settings);
   const [photos, setPhotos] = useState(false);
 
   const perms = [

@@ -1,17 +1,23 @@
 import { router, useSegments } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text } from 'react-native';
+import Animated, { FadeInDown, FadeOutDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { F, T } from '@/constants/theme';
 import { hideToast, useApp } from '@/lib/store';
 
 export function Toast() {
-  const { toast } = useApp();
+  const toast = useApp((s) => s.toast);
   const insets = useSafeAreaInsets();
   const inTabs = useSegments()[0] === '(tabs)';
   if (!toast) return null;
   return (
-    <View accessibilityLiveRegion="polite" style={[styles.toast, { bottom: insets.bottom + (inTabs ? 72 : 16) }]}>
+    <Animated.View
+      key={toast}
+      entering={FadeInDown.springify().damping(18)}
+      exiting={FadeOutDown.duration(180)}
+      accessibilityLiveRegion="polite"
+      style={[styles.toast, { bottom: insets.bottom + (inTabs ? 72 : 16) }]}>
       <Text style={styles.text}>{toast}</Text>
       <Pressable
         accessibilityRole="button"
@@ -22,7 +28,7 @@ export function Toast() {
         style={styles.btn}>
         <Text style={styles.view}>View</Text>
       </Pressable>
-    </View>
+    </Animated.View>
   );
 }
 

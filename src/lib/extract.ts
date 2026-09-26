@@ -49,6 +49,9 @@ const EXT_FMT: Record<string, [MediaType, string]> = {
 /** What to draw on screen before saving: the small preview, else the original for images/real GIFs. */
 export const previewOf = (it: MediaItem) => it.thumb ?? (it.type === 'IMG' || it.fmt === 'GIF' ? it.url : undefined);
 
+/** For small thumbnails (filmstrip, picker, queue): never pull a full GIF original (often several MB) just to draw 50px. */
+export const thumbPreviewOf = (it: MediaItem) => it.thumb ?? (it.type === 'IMG' ? it.url : undefined);
+
 export function fmtOf(url: string): [MediaType, string] | undefined {
   const ext = url.split(/[?#]/)[0].split('.').pop()?.toLowerCase() ?? '';
   return EXT_FMT[ext];
@@ -106,15 +109,18 @@ export function parseRedditEmbed(html: string): Omit<Post, 'url' | 'host' | 'sou
   const gallery = html.match(/<gallery-carousel[\s\S]*?<\/gallery-carousel>/)?.[0];
   const packaged = attr(html, /packaged-media-json="([^"]*)"/);
   if (gallery) {
-    // Map each media id to its first preview URL (640px); the original lives at i.redd.it/<id>.<ext>.
-    const seen = new Map<string, string>();
-    for (const m of gallery.matchAll(/https:\/\/preview\.redd\.it\/(?:[^"?]*-v0-)?([a-z0-9]+)\.(\w+)[^"\s]*/g)) {
-      const f = `${m[1]}.${m[2]}`;
-      if (!seen.has(f)) seen.set(f, unescape(m[0]));
-    }
-    for (const [f, thumb] of seen) {
+    // One <li> per slide. Photos appear as preview.redd.it/…-v0-<id>.<ext> (640px; original at i.redd.it/<id>.<ext>);
+    // GIFs appear only as the original i.redd.it/<id>.gif (unsigned preview URLs 403), so the GIF is its own preview.
+    const slides = gallery.match(/<li\b[\s\S]*?<\/li>/g) ?? [gallery];
+    const seen = new Set<string>();
+    for (const li of slides) {
+      const m = li.match(/https:\/\/(preview|i)\.redd\.it\/(?:[^"?\s]*-v0-)?([a-z0-9]+)\.(\w+)[^"\s]*/);
+      if (!m) continue;
+      const f = `${m[2]}.${m[3]}`;
+      if (seen.has(f)) continue;
+      seen.add(f);
       const [type, fmt] = fmtOf(f) ?? ['IMG', 'JPG'];
-      items.push({ url: `https://i.redd.it/${f}`, thumb, type, fmt });
+      items.push({ url: `https://i.redd.it/${f}`, thumb: m[1] === 'preview' ? unescape(m[0]) : undefined, type, fmt });
     }
   } else if (packaged) {
     const perms: any[] = JSON.parse(packaged).playbackMp4s?.permutations ?? [];

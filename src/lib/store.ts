@@ -17,6 +17,7 @@ export type Settings = {
   allowNsfw: boolean;
   blurNsfw: boolean;
   lockPrivate: boolean;
+  bubble: boolean; // Android floating download bubble (see src/lib/bubble.ts)
 };
 
 export type Saved = {
@@ -35,6 +36,7 @@ export type Saved = {
   nsfw: boolean;
   postUrl: string;
   savedAt: number;
+  saveTo?: SaveTo; // missing on items saved before per-download choice existed
 };
 
 export type Job = {
@@ -45,6 +47,7 @@ export type Job = {
   written: number;
   total: number;
   status: 'waiting' | 'running' | 'done' | 'failed';
+  saveTo: SaveTo; // chosen per download; defaults to the Settings value
   error?: string;
   startedAt?: number;
 };
@@ -67,6 +70,7 @@ const DEFAULTS: Settings = {
   allowNsfw: true,
   blurNsfw: true,
   lockPrivate: true,
+  bubble: false,
 };
 
 export const ROOT = new Directory(Paths.document, 'MediaDL');
@@ -93,14 +97,17 @@ function set(patch: Partial<State> | ((s: State) => Partial<State>)) {
   listeners.forEach((l) => l());
 }
 
-export function useApp(): State {
-  return useSyncExternalStore(
-    (l) => (listeners.add(l), () => listeners.delete(l)),
-    () => state,
-  );
+const subscribe = (l: () => void) => (listeners.add(l), () => void listeners.delete(l));
+
+/**
+ * Subscribe to one slice of state; the component re-renders only when that slice changes.
+ * The selector must return existing references or primitives (e.g. `s => s.jobs`), never a new array/object.
+ */
+export function useApp<T>(select: (s: State) => T): T {
+  return useSyncExternalStore(subscribe, () => select(state));
 }
 
-export const getState = () => state;
+export const getSettings = () => state.settings;
 
 export function updateSettings(patch: Partial<Settings>) {
   set((s) => ({ settings: { ...s.settings, ...patch }, unlocked: 'lockPrivate' in patch ? false : s.unlocked }));
@@ -137,8 +144,8 @@ export function folderDir(key: string) {
 export const folderName = (k: string) => (k === 'All' ? 'All downloads' : k === 'Private' ? 'Private (NSFW)' : k);
 
 /** Human-readable location shown in the UI. */
-export function folderLabel(key: string, s = state.settings) {
-  if (key !== 'Private' && s.saveTo === 'photos') return 'Photos › Media Downloader';
+export function folderLabel(key: string, saveTo: SaveTo = state.settings.saveTo) {
+  if (key !== 'Private' && saveTo === 'photos') return 'Photos › Media Downloader';
   return 'Files › MediaDL' + (key === 'All' ? '' : key === 'Private' ? '/.private' : '/' + key);
 }
 
@@ -148,7 +155,7 @@ const pad = (n: number) => String(n).padStart(2, '0');
 const MAX_PARALLEL = 2;
 let jobSeq = 0;
 
-export function enqueue(post: Post, indexes: number[]) {
+export function enqueue(post: Post, indexes: number[], saveTo: SaveTo = state.settings.saveTo) {
   const jobs: Job[] = indexes.map((i) => ({
     id: `j${++jobSeq}`,
     name: `${post.source.toLowerCase()}_${post.slug}_${pad(i + 1)}.${post.items[i].fmt.toLowerCase()}`,
@@ -157,6 +164,7 @@ export function enqueue(post: Post, indexes: number[]) {
     written: 0,
     total: 0,
     status: 'waiting',
+    saveTo,
   }));
   set((s) => ({ jobs: [...s.jobs.filter((j) => j.status !== 'done'), ...jobs] }));
   pump();
@@ -187,6 +195,14 @@ async function mediaLibrary(): Promise<typeof ML> {
   return import('expo-media-library');
 }
 
+export async function hasPhotos(): Promise<boolean> {
+  try {
+    return (await (await mediaLibrary()).getPermissionsAsync()).granted;
+  } catch {
+    return false;
+  }
+}
+
 export async function requestPhotos(): Promise<boolean> {
   try {
     return (await (await mediaLibrary()).requestPermissionsAsync()).granted;
@@ -211,7 +227,7 @@ async function run(job: Job) {
   const { post, item } = job;
   const key = folderKey(post.source, post.nsfw);
   const dir = folderDir(key);
-  let lastPct = -1;
+  let lastAt = 0;
   try {
     dir.create({ intermediates: true, idempotent: true });
     let dest = new File(dir, job.name);
@@ -219,15 +235,16 @@ async function run(job: Job) {
     const file = await File.downloadFileAsync(item.url, dest, {
       headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)', Referer: post.url },
       onProgress: ({ bytesWritten, totalBytes }) => {
-        const pct = totalBytes > 0 ? Math.floor((bytesWritten / totalBytes) * 100) : 0;
-        if (pct !== lastPct) {
-          lastPct = pct;
+        // Each patch re-renders the Queue; ~4 updates a second is smooth without flooding the JS thread.
+        const now = Date.now();
+        if (now - lastAt > 250) {
+          lastAt = now;
           patchJob(job.id, { written: bytesWritten, total: totalBytes });
         }
       },
     });
     let warning: string | undefined;
-    if (state.settings.saveTo === 'photos' && !post.nsfw) {
+    if (job.saveTo === 'photos' && !post.nsfw) {
       await saveToPhotos(file.uri).catch((e: Error) => (warning = e.message));
     }
     const saved: Saved = {
@@ -246,6 +263,7 @@ async function run(job: Job) {
       nsfw: post.nsfw,
       postUrl: post.url,
       savedAt: Date.now(),
+      saveTo: job.saveTo,
     };
     set((s) => ({
       history: [saved, ...s.history],
@@ -253,7 +271,7 @@ async function run(job: Job) {
     }));
     if (warning) showToast(warning);
     else if (!state.jobs.some((j) => j.status === 'waiting' || j.status === 'running'))
-      showToast(`Downloads finished. Saved to ${folderLabel(key)}`);
+      showToast(`Downloads finished. Saved to ${folderLabel(key, job.saveTo)}`);
   } catch (e) {
     patchJob(job.id, { status: 'failed', error: (e as Error).message });
   }

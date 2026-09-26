@@ -1,0 +1,6 @@
+{
+  "name": "floating-bubble",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Android-only floating download bubble (draw over other apps) for Media Downloader"
+}

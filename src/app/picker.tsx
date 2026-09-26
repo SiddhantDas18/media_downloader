@@ -1,16 +1,18 @@
 import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
+import Animated, { FadeInDown, FadeOut, ZoomIn } from 'react-native-reanimated';
 
-import { Btn, Radio, Tag, Txt } from '@/components/ui';
+import { Btn, Press, Radio, Tag, Txt } from '@/components/ui';
 import { F, T } from '@/constants/theme';
-import { previewOf } from '@/lib/extract';
-import { enqueue, useApp } from '@/lib/store';
+import { thumbPreviewOf } from '@/lib/extract';
+import { enqueue, useApp, type SaveTo } from '@/lib/store';
 
 export default function Picker() {
-  const { post } = useApp();
-  const slide = Number(useLocalSearchParams<{ slide: string }>().slide ?? 0);
+  const post = useApp((s) => s.post);
+  const params = useLocalSearchParams<{ slide: string; saveTo?: SaveTo }>();
+  const slide = Number(params.slide ?? 0);
   const n = post?.items.length ?? 0;
   const [mode, setMode] = useState<'all' | 'choose' | 'one'>('all');
   const [sel, setSel] = useState<number[]>(() => [...Array(n).keys()]);
@@ -33,7 +35,7 @@ export default function Picker() {
       </View>
 
       {mode === 'choose' ? (
-        <>
+        <Animated.View entering={FadeInDown.duration(200)} exiting={FadeOut.duration(120)} style={{ gap: 14 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <Txt v="sub" style={{ fontSize: 13 }}>{`${sel.length} selected`}</Txt>
             <Btn
@@ -47,30 +49,31 @@ export default function Picker() {
             {post.items.map((it, i) => {
               const on = sel.includes(i);
               return (
-                <Pressable
+                <Press
                   key={i}
+                  scaleTo={0.94}
                   accessibilityRole="checkbox"
                   accessibilityState={{ checked: on }}
                   accessibilityLabel={`Item ${i + 1}, ${it.fmt}`}
                   onPress={() => setSel(on ? sel.filter((x) => x !== i) : [...sel, i].sort((a, b) => a - b))}
-                  style={[styles.cell, { opacity: on ? 1 : 0.55, borderColor: on ? T.accent : 'transparent' }]}>
-                  <Image source={previewOf(it)} style={StyleSheet.absoluteFill} contentFit="cover" autoplay={false} />
-                  <View style={[styles.check, { backgroundColor: on ? T.accent : 'rgba(0,0,0,0.25)' }]}>
-                    <Text style={{ color: T.accentInk, fontFamily: F.semibold, fontSize: 12 }}>{on ? '✓' : ''}</Text>
-                  </View>
+                  style={[styles.cell, { opacity: on ? 1 : 0.55, borderColor: on ? T.accent : 'transparent', transitionProperty: ['opacity', 'borderColor'], transitionDuration: 160 }]}>
+                  <Image source={thumbPreviewOf(it)} style={StyleSheet.absoluteFill} contentFit="cover" autoplay={false} transition={180} cachePolicy="memory" />
+                  <Animated.View style={[styles.check, { backgroundColor: on ? T.accent : 'rgba(0,0,0,0.25)', transitionProperty: 'backgroundColor', transitionDuration: 160 }]}>
+                    {on ? <Animated.Text entering={ZoomIn.duration(140)} style={{ color: T.accentInk, fontFamily: F.semibold, fontSize: 12 }}>✓</Animated.Text> : null}
+                  </Animated.View>
                   <Tag style={{ position: 'absolute', left: 5, bottom: 5 }}>{it.fmt}</Tag>
-                </Pressable>
+                </Press>
               );
             })}
           </View>
-        </>
+        </Animated.View>
       ) : null}
 
       <Btn
         label={label}
         disabled={!pick.length}
         onPress={() => {
-          enqueue(post, pick);
+          enqueue(post, pick, params.saveTo);
           router.dismissTo('/queue');
         }}
         style={{ height: 52, borderRadius: T.r }}

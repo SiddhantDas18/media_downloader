@@ -1,7 +1,7 @@
 // Run: node src/lib/extract.check.ts
 import assert from 'node:assert/strict';
 
-import { fmtOf, parseFxTweet, parseIgEmbed, parseIgMedia, parseDashBest, parseInput, previewOf, parseOg, parseRedditEmbed, sourceOf } from './extract.ts';
+import { fmtOf, parseFxTweet, parseIgEmbed, parseIgMedia, parseDashBest, parseInput, previewOf, thumbPreviewOf, parseOg, parseRedditEmbed, sourceOf } from './extract.ts';
 
 assert.equal(parseInput('look https://redd.it/abc here')?.href, 'https://redd.it/abc');
 assert.equal(parseInput('instagram.com/p/C8xQ2fLt')?.host, 'instagram.com');
@@ -18,18 +18,25 @@ assert.equal(image.author, 'r/pics · u/filmgrain');
 assert.equal(image.nsfw, true);
 assert.deepEqual(image.items, [{ url: 'https://i.redd.it/abc.jpeg', thumb: 'https://preview.redd.it/sunset-v0-abc.jpeg?width=640&s=9', type: 'IMG', fmt: 'JPG' }]);
 
-const gallery = parseRedditEmbed(`${screen({ url: 'https://www.reddit.com/gallery/x', type: 'gallery' })}<gallery-carousel>
-  <faceplate-img src="https://preview.redd.it/my-grandma-v0-jqme1.jpg?width=640&amp;s=1"></faceplate-img><img src="https://preview.redd.it/my-grandma-v0-jqme1.jpg?width=640">
-  <img src="https://preview.redd.it/my-grandma-v0-lexn2.png?width=640"><img src="https://preview.redd.it/zz9.gif?format=png8"></gallery-carousel>`);
+// Mixed gallery as Reddit serves it: photos via preview.redd.it, GIFs only as the i.redd.it original.
+const gallery = parseRedditEmbed(`${screen({ url: 'https://www.reddit.com/gallery/x', type: 'gallery' })}<gallery-carousel><ul>
+  <li slot="page-1"><faceplate-img src="https://preview.redd.it/my-grandma-v0-jqme1.jpg?width=640&amp;s=1"></faceplate-img><img src="https://preview.redd.it/my-grandma-v0-jqme1.jpg?width=640&amp;s=1"></li>
+  <li slot="page-2"><faceplate-img src="https://i.redd.it/5lpv1.gif"></faceplate-img><img src="https://i.redd.it/5lpv1.gif"></li>
+  <li slot="page-3"><img src="https://preview.redd.it/my-grandma-v0-lexn2.png?width=640"></li>
+</ul></gallery-carousel>`);
 assert.deepEqual(gallery.items.map((i) => [i.url, i.type, i.thumb]), [
   ['https://i.redd.it/jqme1.jpg', 'IMG', 'https://preview.redd.it/my-grandma-v0-jqme1.jpg?width=640&s=1'],
+  ['https://i.redd.it/5lpv1.gif', 'GIF', undefined],
   ['https://i.redd.it/lexn2.png', 'IMG', 'https://preview.redd.it/my-grandma-v0-lexn2.png?width=640'],
-  ['https://i.redd.it/zz9.gif', 'GIF', 'https://preview.redd.it/zz9.gif?format=png8'],
 ]);
 // Screens draw the small preview; the original is only fetched when saving.
 assert.equal(previewOf(gallery.items[0]), gallery.items[0].thumb);
 assert.equal(previewOf({ url: 'https://x/full.jpg', type: 'IMG', fmt: 'JPG' }), 'https://x/full.jpg');
 assert.equal(previewOf({ url: 'https://x/v.mp4', type: 'VID', fmt: 'MP4' }), undefined);
+// Small thumbnails never fall back to a full GIF original; the carousel (previewOf) still shows it.
+assert.equal(thumbPreviewOf(gallery.items[1]), undefined);
+assert.equal(previewOf(gallery.items[1]), 'https://i.redd.it/5lpv1.gif');
+assert.equal(thumbPreviewOf(gallery.items[0]), gallery.items[0].thumb);
 
 const pm = { playbackMp4s: { duration: 14, permutations: [
   { source: { url: 'https://packaged-media.redd.it/v/pb/m2-res_392p.mp4?a=1&b=2', dimensions: { width: 220, height: 392 } } },

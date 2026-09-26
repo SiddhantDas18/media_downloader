@@ -2,6 +2,7 @@ import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import type { ReactNode } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View, type PressableProps, type StyleProp, type TextProps, type ViewStyle } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming, ZoomIn, ZoomOut } from 'react-native-reanimated';
 
 import { F, T } from '@/constants/theme';
 import type { MediaType } from '@/lib/extract';
@@ -10,6 +11,28 @@ type Variant = 'display' | 'title' | 'body' | 'sub' | 'mono' | 'label';
 
 export function Txt({ v = 'body', style, ...rest }: TextProps & { v?: Variant }) {
   return <Text {...rest} style={[s[v], style]} />;
+}
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+/** Pressable that springs down slightly while held. Runs on the UI thread, so it stays smooth while JS is busy. */
+export function Press({ style, onPressIn, onPressOut, scaleTo = 0.96, ...rest }: Omit<PressableProps, 'style'> & { style?: StyleProp<ViewStyle>; scaleTo?: number }) {
+  const scale = useSharedValue(1);
+  const anim = useAnimatedStyle(() => ({ transform: [{ scale: scale.get() }] }));
+  return (
+    <AnimatedPressable
+      {...rest}
+      onPressIn={(e) => {
+        scale.set(withTiming(scaleTo, { duration: 90 }));
+        onPressIn?.(e);
+      }}
+      onPressOut={(e) => {
+        scale.set(withSpring(1, { damping: 14, stiffness: 320 }));
+        onPressOut?.(e);
+      }}
+      style={[style, anim]}
+    />
+  );
 }
 
 export function Btn({
@@ -21,19 +44,14 @@ export function Btn({
   ...rest
 }: PressableProps & { label: string; kind?: 'accent' | 'raised' | 'ghost'; color?: string; style?: StyleProp<ViewStyle> }) {
   return (
-    <Pressable
+    <Press
       accessibilityRole="button"
+      accessibilityState={{ disabled: !!disabled }}
       disabled={disabled}
       {...rest}
-      style={({ pressed }) => [
-        s.btn,
-        kind === 'accent' && { backgroundColor: T.accent },
-        kind === 'raised' && { backgroundColor: T.raised },
-        { opacity: disabled ? 0.45 : pressed ? 0.8 : 1 },
-        style,
-      ]}>
+      style={[s.btn, kind === 'accent' && { backgroundColor: T.accent }, kind === 'raised' && { backgroundColor: T.raised }, { opacity: disabled ? 0.45 : 1 }, style]}>
       <Text style={[s.btnText, { color: color ?? (kind === 'accent' ? T.accentInk : kind === 'ghost' ? T.softInk : T.ink) }]}>{label}</Text>
-    </Pressable>
+    </Press>
   );
 }
 
@@ -59,10 +77,21 @@ export function Row({ first, onPress, children, style }: { first?: boolean; onPr
   );
 }
 
+const ease = { transitionDuration: 200, transitionTimingFunction: 'ease-out' } as const;
+
 export function Toggle({ on }: { on: boolean }) {
   return (
-    <View style={[s.track, { backgroundColor: on ? T.accent : T.off }]}>
-      <View style={[s.knob, { left: on ? 23 : 3, backgroundColor: on ? T.accentInk : T.knobOff }]} />
+    <Animated.View style={[s.track, ease, { backgroundColor: on ? T.accent : T.off, transitionProperty: 'backgroundColor' }]}>
+      <Animated.View style={[s.knob, ease, { left: on ? 23 : 3, backgroundColor: on ? T.accentInk : T.knobOff, transitionProperty: ['left', 'backgroundColor'] }]} />
+    </Animated.View>
+  );
+}
+
+/** Progress bar whose fill glides between updates instead of jumping. */
+export function Bar({ pct, color }: { pct: number; color: string }) {
+  return (
+    <View style={s.barTrack}>
+      <Animated.View style={[s.barFill, { width: `${pct}%`, backgroundColor: color, transitionProperty: ['width', 'backgroundColor'], transitionDuration: 260, transitionTimingFunction: 'linear' }]} />
     </View>
   );
 }
@@ -85,19 +114,20 @@ export function SectionLabel({ children }: { children: string }) {
 
 export function Radio({ on, title, sub, onPress }: { on: boolean; title: string; sub?: string; onPress: () => void }) {
   return (
-    <Pressable
+    <Press
+      scaleTo={0.98}
       accessibilityRole="radio"
       accessibilityState={{ selected: on }}
       onPress={onPress}
-      style={[s.radio, { borderColor: on ? T.accent : T.line, backgroundColor: on ? T.soft : 'transparent' }]}>
-      <View style={[s.radioRing, { borderColor: on ? T.accent : T.sub }]}>
-        {on ? <View style={s.radioDot} /> : null}
-      </View>
+      style={[s.radio, ease, { borderColor: on ? T.accent : T.line, backgroundColor: on ? T.soft : 'transparent', transitionProperty: ['borderColor', 'backgroundColor'] }]}>
+      <Animated.View style={[s.radioRing, ease, { borderColor: on ? T.accent : T.sub, transitionProperty: 'borderColor' }]}>
+        {on ? <Animated.View entering={ZoomIn.duration(160)} exiting={ZoomOut.duration(120)} style={s.radioDot} /> : null}
+      </Animated.View>
       <View style={{ flex: 1 }}>
         <Txt style={{ fontSize: 15, fontFamily: F.semibold }}>{title}</Txt>
         {sub ? <Txt v="sub" style={{ marginTop: 2 }}>{sub}</Txt> : null}
       </View>
-    </Pressable>
+    </Press>
   );
 }
 
@@ -128,9 +158,9 @@ export function Thumb({
   onPress?: () => void;
 }) {
   return (
-    <Pressable onPress={onPress} disabled={!onPress} style={[s.thumb, { borderRadius: radius }, style]}>
+    <Press onPress={onPress} disabled={!onPress} scaleTo={0.97} style={[s.thumb, { borderRadius: radius }, style]}>
       {uri ? (
-        <Image source={uri} style={StyleSheet.absoluteFill} contentFit="cover" blurRadius={hidden ? 40 : 0} autoplay={!hidden && type === 'GIF'} recyclingKey={uri} />
+        <Image source={uri} style={StyleSheet.absoluteFill} contentFit="cover" blurRadius={hidden ? 40 : 0} autoplay={!hidden && type === 'GIF'} recyclingKey={uri} transition={180} />
       ) : (
         <View style={s.thumbEmpty}><Txt v="mono" style={{ fontSize: 10, color: T.sub }}>{type === 'VID' ? '▶' : type}</Txt></View>
       )}
@@ -141,7 +171,7 @@ export function Thumb({
         </View>
       ) : null}
       {fmt ? <Tag style={{ position: 'absolute', left: 5, bottom: 5 }}>{fmt}</Tag> : null}
-    </Pressable>
+    </Press>
   );
 }
 
@@ -166,5 +196,7 @@ export const s = StyleSheet.create({
   tagText: { fontFamily: F.monoMedium, fontSize: 9.5, color: '#fff' },
   thumb: { aspectRatio: 1, overflow: 'hidden', backgroundColor: T.raised },
   thumbEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  barTrack: { height: 4, borderRadius: 2, backgroundColor: T.raised, overflow: 'hidden' },
+  barFill: { height: '100%', borderRadius: 2 },
   nsfw: { position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', gap: 2, backgroundColor: 'rgba(0,0,0,0.25)' },
 });

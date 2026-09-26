@@ -9,7 +9,9 @@ import { folderLabel, folderName, thumbOf, useApp } from '@/lib/store';
 
 export default function Folder() {
   const { key } = useLocalSearchParams<{ key: string }>();
-  const { history, settings, unlocked } = useApp();
+  const history = useApp((s) => s.history);
+  const settings = useApp((s) => s.settings);
+  const unlocked = useApp((s) => s.unlocked);
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const items = history.filter((h) => h.folder === key && (!h.nsfw || (settings.allowNsfw && (!settings.lockPrivate || unlocked))));
 

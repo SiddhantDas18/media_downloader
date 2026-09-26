@@ -4,7 +4,9 @@ import { DarkTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { Platform } from 'react-native';
 
+import { LinkPill } from '@/components/link-pill';
 import { Toast } from '@/components/toast';
 import { T } from '@/constants/theme';
 import { useApp } from '@/lib/store';
@@ -16,7 +18,7 @@ const sheet = { presentation: 'formSheet', sheetAllowedDetents: 'fitToContents',
 
 export default function RootLayout() {
   const [loaded] = useFonts({ SpaceGrotesk_400Regular, SpaceGrotesk_500Medium, SpaceGrotesk_600SemiBold, IBMPlexMono_400Regular, IBMPlexMono_500Medium });
-  const { onboarded } = useApp().settings;
+  const { onboarded } = useApp((s) => s.settings);
 
   useEffect(() => {
     if (loaded) SplashScreen.hideAsync();
@@ -26,19 +28,20 @@ export default function RootLayout() {
   return (
     <ThemeProvider value={theme}>
       <StatusBar style="light" />
-      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: T.bg } }}>
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: T.bg }, animation: Platform.OS === 'android' ? 'slide_from_right' : 'default' }}>
         <Stack.Protected guard={!onboarded}>
-          <Stack.Screen name="onboarding" />
+          <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
         </Stack.Protected>
         <Stack.Protected guard={onboarded}>
-          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
           <Stack.Screen name="preview" />
           <Stack.Screen name="folder/[key]" />
-          <Stack.Screen name="viewer/[id]" options={{ contentStyle: { backgroundColor: '#000' } }} />
+          <Stack.Screen name="viewer/[id]" options={{ contentStyle: { backgroundColor: '#000' }, animation: 'fade' }} />
           <Stack.Screen name="picker" options={sheet} />
           <Stack.Screen name="location" options={sheet} />
         </Stack.Protected>
       </Stack>
+      {onboarded ? <LinkPill /> : null}
       <Toast />
     </ThemeProvider>
   );

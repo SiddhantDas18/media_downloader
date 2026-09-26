@@ -12,7 +12,8 @@
       "infoPlist": {
         "UIFileSharingEnabled": true,
         "LSSupportsOpeningDocumentsInPlace": true
-      }
+      },
+      "bundleIdentifier": "com.siddhantdas.mediadownloader"
     },
     "android": {
       "adaptiveIcon": {
@@ -21,7 +22,8 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.siddhantdas.mediadownloader"
     },
     "web": {
       "output": "static",
@@ -30,7 +32,24 @@
     "plugins": [
       "expo-router",
       "expo-video",
-      "expo-sharing",
+      [
+        "expo-sharing",
+        {
+          "ios": {
+            "enabled": true,
+            "activationRule": {
+              "supportsWebUrlWithMaxCount": 1,
+              "supportsText": true
+            }
+          },
+          "android": {
+            "enabled": true,
+            "singleShareMimeTypes": [
+              "text/plain"
+            ]
+          }
+        }
+      ],
       [
         "expo-splash-screen",
         {

@@ -27,7 +27,7 @@ function Media({ item }: { item: Saved }) {
 
 export default function Viewer() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const item = useApp().history.find((h) => h.id === id);
+  const item = useApp((s) => s.history.find((h) => h.id === id));
   if (!item) return null;
 
   const rows: [string, string][] = [
@@ -35,7 +35,7 @@ export default function Viewer() {
     ['Resolution', item.w && item.h ? `${item.w}×${item.h}` : '—'],
     ['Size', formatBytes(item.bytes)],
     ['Source', item.source],
-    ['Saved to', folderLabel(item.folder)],
+    ['Saved to', folderLabel(item.folder, item.saveTo)],
     ['Downloaded', dayLabel(item.savedAt)],
   ];
 

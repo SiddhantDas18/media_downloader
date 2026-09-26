@@ -14,7 +14,7 @@ const OPTIONS: [SaveTo, string, string][] = [
 ];
 
 export default function Location() {
-  const { saveTo } = useApp().settings;
+  const { saveTo } = useApp((s) => s.settings);
   const [draft, setDraft] = useState(saveTo);
 
   return (

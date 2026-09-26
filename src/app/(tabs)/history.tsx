@@ -1,6 +1,7 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import Animated, { FadeInLeft, FadeInRight } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Card, Row, Thumb, Txt } from '@/components/ui';
@@ -11,7 +12,9 @@ const ORDER = ['Reddit', 'Instagram', 'Facebook', 'X', 'TikTok', 'Tumblr', 'Pint
 const INITIALS: Record<string, string> = { Facebook: 'FB', Instagram: 'IG', Reddit: 'RD', X: 'X', TikTok: 'TT', Tumblr: 'TB', Pinterest: 'PN', Web: 'WB', All: 'MD', Private: 'PV' };
 
 export default function History() {
-  const { history, settings, unlocked } = useApp();
+  const history = useApp((s) => s.history);
+  const settings = useApp((s) => s.settings);
+  const unlocked = useApp((s) => s.unlocked);
   const params = useLocalSearchParams<{ mode?: string }>();
   const mode = params.mode === 'timeline' ? 'timeline' : 'folders';
   const setMode = (m: string) => router.setParams({ mode: m });
@@ -48,13 +51,17 @@ export default function History() {
           <Txt v="mono">{`${visible.length} files · ${formatBytes(visible.reduce((a, h) => a + h.bytes, 0))}`}</Txt>
         </View>
         <View style={styles.seg} accessibilityRole="tablist">
+          {/* The selected pill slides between the two segments. */}
+          <View pointerEvents="none" style={styles.segTrack}>
+            <Animated.View style={[styles.segPill, { left: mode === 'folders' ? '0%' : '50%', transitionProperty: 'left', transitionDuration: 240, transitionTimingFunction: 'ease-out' }]} />
+          </View>
           {(['folders', 'timeline'] as const).map((k) => (
             <Pressable
               key={k}
               accessibilityRole="tab"
               accessibilityState={{ selected: mode === k }}
               onPress={() => setMode(k)}
-              style={[styles.segBtn, mode === k && { backgroundColor: T.surface, boxShadow: '0 1px 3px rgba(0,0,0,0.12)' }]}>
+              style={styles.segBtn}>
               <Txt style={{ fontFamily: F.semibold, fontSize: 14, color: mode === k ? T.ink : T.sub }}>{k === 'folders' ? 'Folders' : 'Timeline'}</Txt>
             </Pressable>
           ))}
@@ -65,6 +72,7 @@ export default function History() {
             <Txt v="sub" style={{ textAlign: 'center', fontSize: 14, lineHeight: 21 }}>{'No downloads yet.\nSaved files are sorted into folders here.'}</Txt>
           </View>
         ) : mode === 'folders' ? (
+          <Animated.View key="folders" entering={FadeInLeft.duration(280)}>
           <Card>
             {folders.map((k, i) => {
               const g = groups[k];
@@ -93,8 +101,9 @@ export default function History() {
               );
             })}
           </Card>
+          </Animated.View>
         ) : (
-          <>
+          <Animated.View key="timeline" entering={FadeInRight.duration(280)} style={{ gap: 14 }}>
             {days.map(([label, rows]) => (
               <View key={label} style={{ gap: 6 }}>
                 <Txt v="label" style={{ paddingVertical: 6, paddingHorizontal: 2 }}>{label}</Txt>
@@ -107,7 +116,7 @@ export default function History() {
                         <Txt v="sub" style={{ fontSize: 12, marginTop: 2 }}>
                           {[h.fmt, formatBytes(h.bytes), h.w && h.h ? `${h.w}×${h.h}` : ''].filter(Boolean).join(' · ')}
                         </Txt>
-                        <Txt v="mono" numberOfLines={1} style={{ fontSize: 11, color: T.softInk, marginTop: 3 }}>{folderLabel(h.folder)}</Txt>
+                        <Txt v="mono" numberOfLines={1} style={{ fontSize: 11, color: T.softInk, marginTop: 3 }}>{folderLabel(h.folder, h.saveTo)}</Txt>
                       </View>
                     </Row>
                   ))}
@@ -119,7 +128,7 @@ export default function History() {
                 <Txt v="sub" style={{ textAlign: 'center', fontSize: 13, fontFamily: F.medium }}>{`${privCount} private items hidden · Unlock`}</Txt>
               </Pressable>
             ) : null}
-          </>
+          </Animated.View>
         )}
       </ScrollView>
     </SafeAreaView>
@@ -128,7 +137,9 @@ export default function History() {
 
 const styles = StyleSheet.create({
   seg: { flexDirection: 'row', padding: 3, borderRadius: T.rs, backgroundColor: T.raised },
-  segBtn: { flex: 1, height: 36, borderRadius: T.rs - 2, alignItems: 'center', justifyContent: 'center' },
+  segBtn: { flex: 1, height: 36, alignItems: 'center', justifyContent: 'center' },
+  segTrack: { position: 'absolute', top: 3, bottom: 3, left: 3, right: 3 },
+  segPill: { position: 'absolute', top: 0, bottom: 0, width: '50%', borderRadius: T.rs - 2, backgroundColor: T.surface, boxShadow: '0 1px 3px rgba(0,0,0,0.12)' },
   empty: { paddingVertical: 48, paddingHorizontal: 20, borderRadius: T.r, borderWidth: 1, borderStyle: 'dashed', borderColor: T.line },
   chip: { width: 44, height: 44, borderRadius: T.rs, alignItems: 'center', justifyContent: 'center' },
   lock: { paddingVertical: 2, paddingHorizontal: 5, borderRadius: 3, backgroundColor: T.soft },

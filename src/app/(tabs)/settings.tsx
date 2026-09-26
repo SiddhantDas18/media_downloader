@@ -1,14 +1,17 @@
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { Alert, Platform, ScrollView, View } from 'react-native';
+import Animated, { FadeInDown, FadeOutUp } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Card, Row, SectionLabel, SettingRow, Txt } from '@/components/ui';
 import { F, T } from '@/constants/theme';
+import { bubbleSupported, disableBubble, enableBubble, openOverlaySettings } from '@/lib/bubble';
 import { clearHistory, formatBytes, updateSettings, useApp } from '@/lib/store';
 
 export default function Settings() {
-  const { settings: st, history } = useApp();
+  const st = useApp((s) => s.settings);
+  const history = useApp((s) => s.history);
   const bio = Platform.OS === 'ios' ? 'Face ID' : 'fingerprint unlock';
   const total = history.reduce((a, h) => a + h.bytes, 0);
 
@@ -47,6 +50,24 @@ export default function Settings() {
         <SectionLabel>Link checker</SectionLabel>
         <Card>
           <SettingRow first title="Watch clipboard" sub="Offer a download when you copy a post link" on={st.watchClipboard} onPress={() => updateSettings({ watchClipboard: !st.watchClipboard })} />
+          {Platform.OS === 'android' ? (
+            <SettingRow
+              title="Floating download bubble"
+              sub="Shows over Instagram, Reddit and other apps. Copy a link, tap the bubble. Needs Gallery and 'Display over other apps'."
+              on={st.bubble}
+              onPress={async () => {
+                if (st.bubble) return disableBubble();
+                if (!bubbleSupported) return Alert.alert('Needs the full app', 'The bubble uses native Android code, so it works in a development or store build, not in Expo Go.');
+                const missing = await enableBubble();
+                if (missing === 'photos') Alert.alert('Gallery access needed', 'Allow access to photos and videos so the bubble can save downloads. The bubble stays off until then.');
+                if (missing === 'overlay')
+                  Alert.alert('Allow "Display over other apps"', 'Android needs this so the bubble can float over Instagram and Reddit. Turn it on for Media Downloader, then come back.', [
+                    { text: 'Not now', style: 'cancel' },
+                    { text: 'Open settings', onPress: openOverlaySettings },
+                  ]);
+              }}
+            />
+          ) : null}
           <SettingRow title="Ask before bulk downloads" sub="When a link has several items, ask for all, some or one" on={st.askBulk} onPress={() => updateSettings({ askBulk: !st.askBulk })} />
         </Card>
 
@@ -54,10 +75,10 @@ export default function Settings() {
         <Card>
           <SettingRow first title="Allow NSFW content" sub="When off, NSFW posts are skipped and kept out of History" on={st.allowNsfw} onPress={() => updateSettings({ allowNsfw: !st.allowNsfw })} />
           {st.allowNsfw ? (
-            <>
+            <Animated.View entering={FadeInDown.duration(200)} exiting={FadeOutUp.duration(150)}>
               <SettingRow indent title="Blur thumbnails" sub="Tap a blurred item to reveal it" on={st.blurNsfw} onPress={() => updateSettings({ blurNsfw: !st.blurNsfw })} />
               <SettingRow indent title="Lock Private folder" sub={`Require ${bio} to open NSFW downloads`} on={st.lockPrivate} onPress={() => updateSettings({ lockPrivate: !st.lockPrivate })} />
-            </>
+            </Animated.View>
           ) : null}
         </Card>
 
