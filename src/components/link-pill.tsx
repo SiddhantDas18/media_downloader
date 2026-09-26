@@ -90,7 +90,7 @@ export function LinkPill() {
   const label = pill.source ? `${pill.source} link copied` : 'Link copied';
 
   return (
-    <Animated.View entering={SlideInUp.springify().damping(17)} exiting={FadeOutUp.duration(180)} style={[styles.wrap, { top: insets.top + 6 }]} pointerEvents="box-none">
+    <Animated.View entering={SlideInUp.duration(180)} exiting={FadeOutUp.duration(180)} style={[styles.wrap, { top: insets.top + 6 }]} pointerEvents="box-none">
       <Press accessibilityRole="button" accessibilityLabel={`${label}. Download`} onPress={go} scaleTo={0.97} style={styles.pill}>
         <View style={styles.chip}>
           <Text style={styles.chipText}>{INITIALS[pill.source ?? 'Web'] ?? '↓'}</Text>
@@ -106,8 +106,8 @@ export function LinkPill() {
         <View style={styles.cta}>
           <Text style={styles.ctaText}>Download</Text>
         </View>
-        <Pressable accessibilityRole="button" accessibilityLabel="Dismiss" hitSlop={10} onPress={() => setPill(null)} style={styles.close}>
-          <Text style={{ color: T.sub, fontSize: 16 }}>✕</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="Cancel" hitSlop={8} onPress={() => setPill(null)} style={styles.cancel}>
+          <Text style={styles.cancelText}>Cancel</Text>
         </Pressable>
       </Press>
     </Animated.View>
@@ -127,5 +127,6 @@ const styles = StyleSheet.create({
   url: { fontFamily: F.mono, fontSize: 11.5, color: T.sub, marginTop: 1 },
   cta: { height: 32, paddingHorizontal: 12, borderRadius: 999, backgroundColor: T.accent, justifyContent: 'center' },
   ctaText: { fontFamily: F.semibold, fontSize: 13, color: T.accentInk },
-  close: { width: 24, alignItems: 'center' },
+  cancel: { height: 32, paddingHorizontal: 10, borderRadius: 999, backgroundColor: T.raised, justifyContent: 'center' },
+  cancelText: { fontFamily: F.semibold, fontSize: 13, color: T.ink },
 });

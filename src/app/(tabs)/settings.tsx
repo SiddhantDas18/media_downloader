@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Row, SectionLabel, SettingRow, Txt } from '@/components/ui';
 import { F, T } from '@/constants/theme';
 import { bubbleSupported, disableBubble, enableBubble, openOverlaySettings } from '@/lib/bubble';
-import { clearHistory, formatBytes, updateSettings, useApp } from '@/lib/store';
+import { clearHistory, signOutInstagram, formatBytes, updateSettings, useApp } from '@/lib/store';
 
 export default function Settings() {
   const st = useApp((s) => s.settings);
@@ -69,6 +69,28 @@ export default function Settings() {
             />
           ) : null}
           <SettingRow title="Ask before bulk downloads" sub="When a link has several items, ask for all, some or one" on={st.askBulk} onPress={() => updateSettings({ askBulk: !st.askBulk })} />
+        </Card>
+
+        <SectionLabel>Accounts</SectionLabel>
+        <Card>
+          <Row
+            first
+            onPress={() =>
+              st.igSignedIn
+                ? Alert.alert('Sign out of Instagram?', 'Age-restricted and private posts you follow will stop downloading.', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'Sign out', style: 'destructive', onPress: signOutInstagram },
+                  ])
+                : router.push('/instagram-login')
+            }>
+            <View style={{ flex: 1 }}>
+              <Txt>Instagram</Txt>
+              <Txt v="sub" style={{ marginTop: 2 }}>
+                {st.igSignedIn ? 'Signed in. Age-restricted posts and reels download at full quality.' : 'Sign in to download age-restricted posts. Instagram’s own page; the app never sees your password.'}
+              </Txt>
+            </View>
+            <Txt style={{ fontSize: 13, color: st.igSignedIn ? T.danger : T.softInk }}>{st.igSignedIn ? 'Sign out' : 'Sign in ›'}</Txt>
+          </Row>
         </Card>
 
         <SectionLabel>Content</SectionLabel>

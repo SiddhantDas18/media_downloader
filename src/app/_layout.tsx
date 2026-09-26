@@ -6,6 +6,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
 
+import { IgSession } from '@/components/ig-session';
 import { LinkPill } from '@/components/link-pill';
 import { Toast } from '@/components/toast';
 import { T } from '@/constants/theme';
@@ -39,9 +40,11 @@ export default function RootLayout() {
           <Stack.Screen name="viewer/[id]" options={{ contentStyle: { backgroundColor: '#000' }, animation: 'fade' }} />
           <Stack.Screen name="picker" options={sheet} />
           <Stack.Screen name="location" options={sheet} />
+          <Stack.Screen name="instagram-login" options={{ presentation: 'modal' }} />
         </Stack.Protected>
       </Stack>
       {onboarded ? <LinkPill /> : null}
+      <IgSession />
       <Toast />
     </ThemeProvider>
   );

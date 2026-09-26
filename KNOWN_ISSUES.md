@@ -2,7 +2,7 @@
 
 ## Instagram
 
-### 1. Reels / videos come back as images (open)
+### 1. Reels / videos come back as images (open when signed out; fixed when signed in, untested)
 - **Seen:** 2026-09-26 on an Android phone in Expo Go. Sharing a reel or a video post saved the cover image instead of the video.
 - **Why:** the full-quality GraphQL query (`www.instagram.com/graphql/query`, `doc_id=8845758582119845`) fails, so extraction falls back to the embed page (`/p/<code>/embed/captioned/`). The embed data often has `is_video: true` without `video_url`, and the old code turned those nodes into images.
 - **Done so far:** `parseIgMedia` in `src/lib/extract.ts` now returns `null` for a video without `video_url`, so the user gets an error instead of a wrong file. That's a guard, not a fix: reels still don't download when GraphQL fails.
@@ -26,3 +26,10 @@
 - `modules/floating-bubble` (Kotlin) was written without an Android SDK on the dev machine, so it has never been compiled or tried on a device.
 - **To check:** `npx expo run:android` with a phone connected. Turn on Settings → Floating download bubble, allow Gallery and "Display over other apps", copy a link in Instagram, tap the bubble.
 - Play Store: `SYSTEM_ALERT_WINDOW` and a `specialUse` foreground service both need a policy declaration when publishing.
+
+## Instagram sign-in
+
+### 5. Signed-in Instagram requests not yet tried on a device (open)
+- Settings → Accounts → Instagram opens instagram.com's own login in a WebView (`src/app/instagram-login.tsx`). While signed in, a hidden instagram.com WebView (`src/components/ig-session.tsx`) runs `/api/v1/media/<id>/info/` with the user's own cookies. That covers age-restricted posts, full-size photos and real reel videos (issues 1 and 2).
+- Verified offline only: the shortcode→id conversion against real Instagram data, and the response parser (`node src/lib/extract.check.ts`).
+- **To check on the phone:** sign in, paste an age-restricted post and a reel, then sign out and confirm the Settings row flips back. Sign-out calls Instagram's web logout endpoint (`/api/v1/web/accounts/logout/ajax/`); if that endpoint changed, the cookies can outlive the "signed out" state.

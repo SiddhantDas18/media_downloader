@@ -232,14 +232,103 @@ export function parseIgEmbed(html: string): any {
   return ctx?.gql_data?.shortcode_media ?? null;
 }
 
+/** Instagram shortcode (…/p/<code>/) → numeric media id, as used by /api/v1/media/<id>/info/. */
+export function igMediaId(code: string): string {
+  const abc = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  let id = BigInt(0);
+  for (const c of code.slice(0, 11)) id = id * BigInt(64) + BigInt(abc.indexOf(c));
+  return id.toString();
+}
+
+/** Parses /api/v1/media/<id>/info/ (signed-in web API): full-size photos, real video URLs, age-restricted posts included. */
+export function parseIgV1(json: any): Omit<Post, 'url' | 'host' | 'source'> | null {
+  const m = json?.items?.[0];
+  if (!m) return null;
+  const nodes: any[] = m.carousel_media ?? [m];
+  const items: MediaItem[] = nodes.map((n): MediaItem => {
+    const img = n.image_versions2?.candidates ?? [];
+    const best = img.reduce((a: any, b: any) => (b.width > (a?.width ?? 0) ? b : a), null);
+    const small = img.filter((c: any) => c.width >= 480).reduce((a: any, b: any) => (!a || b.width < a.width ? b : a), null);
+    const vid = n.video_versions?.reduce((a: any, b: any) => (b.width > (a?.width ?? 0) ? b : a), null);
+    return vid
+      ? { url: vid.url, thumb: small?.url ?? best?.url, type: 'VID', fmt: 'MP4', w: vid.width, h: vid.height, dur: n.video_duration }
+      : { url: best?.url, thumb: small?.url, type: 'IMG', fmt: fmtOf(best?.url ?? '')?.[1] ?? 'JPG', w: best?.width, h: best?.height };
+  });
+  if (!items.length || items.some((i) => !i.url)) return null;
+  const who = m.user?.username ?? 'instagram';
+  return { author: '@' + who, slug: who, nsfw: false, items };
+}
+
+/**
+ * Signed-in Instagram requests run inside a hidden instagram.com WebView (src/components/ig-session.tsx), so the
+ * user's own login cookies are used without the app ever reading them. Set when signed in, null otherwise.
+ */
+let igSession: ((path: string) => Promise<any>) | null = null;
+export const setIgSession = (fn: typeof igSession) => (igSession = fn);
+
 const DESKTOP_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
+
+// ---------- Instagram pacing ----------
+// Instagram limits how often a network (or account) may *ask about* posts; file downloads from its CDN aren't the
+// problem. So Instagram lookups run one at a time with a gap, and a "please wait" answer pauses them with a growing
+// cooldown (2, 4, 8… up to 30 min) that resets after the next success. No evasion: we just ask less and wait when told.
+
+/** Thrown while Instagram has asked us to wait. `retryAt` is a timestamp (ms). */
+export class RateLimited extends Error {
+  retryAt: number;
+  constructor(retryAt: number) {
+    super('Instagram asked us to slow down.');
+    this.retryAt = retryAt;
+  }
+}
+
+export const IG_GAP_MS = 1500;
+let igChain: Promise<unknown> = Promise.resolve();
+let igLastAt = 0;
+let igBackoff = 0;
+let igCooldownUntil = 0;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Starts (or doubles) the cooldown and throws. */
+export function igCooldown(): never {
+  igBackoff = Math.min(igBackoff ? igBackoff * 2 : 2 * 60_000, 30 * 60_000);
+  igCooldownUntil = Date.now() + igBackoff;
+  throw new RateLimited(igCooldownUntil);
+}
+
+/** Runs Instagram lookups one at a time, IG_GAP_MS apart, and not at all during a cooldown. */
+export function igThrottle<T>(fn: () => Promise<T>): Promise<T> {
+  const run = igChain.then(async () => {
+    if (Date.now() < igCooldownUntil) throw new RateLimited(igCooldownUntil);
+    const wait = igLastAt + IG_GAP_MS - Date.now();
+    if (wait > 0) await sleep(wait);
+    try {
+      const out = await fn();
+      igBackoff = 0;
+      return out;
+    } finally {
+      igLastAt = Date.now();
+    }
+  });
+  igChain = run.catch(() => {});
+  return run;
+}
 
 async function instagram(url: URL): Promise<Omit<Post, 'url' | 'host' | 'source'> | null> {
   const code = url.pathname.match(/\/(?:p|reels?|tv)\/([\w-]+)/)?.[1];
   if (!code) return null;
+  let limited = false; // Instagram answered 401/429 ("please wait")
+  // 0. Signed in: the user's own session sees everything they can see in Instagram, including age-restricted posts.
+  if (igSession) {
+    const json = await igSession(`/api/v1/media/${igMediaId(code)}/info/`).catch((e: Error) => {
+      limited ||= /\b(401|429)\b/.test(e.message);
+      return null;
+    });
+    const post = parseIgV1(json);
+    if (post) return post;
+  }
   // 1. Public web GraphQL query: every carousel item, full-size photos and real video URLs.
   //    Without an X-CSRFToken header Instagram answers 403; any value passes for logged-out requests.
-  let limited = false;
   try {
     const res = await fetch('https://www.instagram.com/graphql/query', {
       method: 'POST',
@@ -256,7 +345,7 @@ async function instagram(url: URL): Promise<Omit<Post, 'url' | 'host' | 'source'
       body: `doc_id=8845758582119845&variables=${encodeURIComponent(JSON.stringify({ shortcode: code, fetch_tagged_user_count: null, hoisted_comment_id: null, hoisted_reply_id: null }))}`,
     });
     const json = await res.json().catch(() => null);
-    limited = res.status === 401 || res.status === 429;
+    limited ||= res.status === 401 || res.status === 429;
     const m = json?.data?.xdt_shortcode_media;
     if (m) return parseIgMedia(m);
     if (json?.data && !m) throw new Error('This Instagram post is private or was deleted');
@@ -269,10 +358,11 @@ async function instagram(url: URL): Promise<Omit<Post, 'url' | 'host' | 'source'
     const post = m && parseIgMedia(m);
     if (post) return post;
   } catch {}
+  if (limited) igCooldown();
   throw new Error(
-    limited
-      ? 'Instagram is limiting requests from this network. Wait a few minutes and try again.'
-      : "Couldn't read this Instagram post. It may be private, age-restricted or need a login.",
+    igSession
+        ? "Couldn't read this Instagram post. It may be private or deleted."
+        : "Couldn't read this Instagram post. If it's age-restricted or private, sign in to Instagram in Settings.",
   );
 }
 
@@ -303,9 +393,23 @@ async function generic(url: URL, source: string): Promise<Omit<Post, 'url' | 'ho
   return { author: title?.slice(0, 60) ?? url.host, slug, nsfw: false, items };
 }
 
-export async function extract(input: string): Promise<Post> {
+// Posts already read this session: reopening or retrying a link doesn't ask the site again. Failures aren't kept.
+const posts = new Map<string, Promise<Post>>();
+
+export function extract(input: string): Promise<Post> {
   const url = parseInput(input);
-  if (!url) throw new Error("That doesn't look like a link");
+  if (!url) return Promise.reject(new Error("That doesn't look like a link"));
+  const key = url.href.replace(/[?#].*$/, '').replace(/\/$/, '');
+  let post = posts.get(key);
+  if (!post) {
+    post = extractFresh(url);
+    posts.set(key, post);
+    post.catch(() => posts.delete(key));
+  }
+  return post;
+}
+
+async function extractFresh(url: URL): Promise<Post> {
   const host = url.host.replace(/^www\.|^m\.|^old\./, '');
   const source = sourceOf(host);
   const direct = fmtOf(url.pathname);
@@ -324,7 +428,7 @@ export async function extract(input: string): Promise<Post> {
   } else if (source === 'TikTok') {
     data = parseTikwm(await (await get(`https://www.tikwm.com/api/?url=${encodeURIComponent(url.href)}&hd=1`)).json());
   } else if (source === 'Instagram') {
-    data = (await instagram(url)) ?? (await generic(url, source)); // generic: story/profile links without a shortcode
+    data = (await igThrottle(() => instagram(url))) ?? (await generic(url, source)); // generic: story/profile links without a shortcode
   } else {
     data = await generic(url, source);
   }

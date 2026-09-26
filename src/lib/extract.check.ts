@@ -1,7 +1,7 @@
 // Run: node src/lib/extract.check.ts
 import assert from 'node:assert/strict';
 
-import { fmtOf, parseFxTweet, parseIgEmbed, parseIgMedia, parseDashBest, parseInput, previewOf, thumbPreviewOf, parseOg, parseRedditEmbed, sourceOf } from './extract.ts';
+import { extract, fmtOf, IG_GAP_MS, igCooldown, igMediaId, igThrottle, parseIgV1, RateLimited, parseFxTweet, parseIgEmbed, parseIgMedia, parseDashBest, parseInput, previewOf, thumbPreviewOf, parseOg, parseRedditEmbed, sourceOf } from './extract.ts';
 
 assert.equal(parseInput('look https://redd.it/abc here')?.href, 'https://redd.it/abc');
 assert.equal(parseInput('instagram.com/p/C8xQ2fLt')?.host, 'instagram.com');
@@ -82,5 +82,35 @@ assert.equal(parseIgMedia({ owner: { username: 'x' }, is_video: true, display_ur
 const ctx = JSON.stringify({ gql_data: { shortcode_media: { owner: { username: 'embed' } } } });
 assert.equal(parseIgEmbed(`x"contextJSON":${JSON.stringify(ctx)},"y"`).owner.username, 'embed');
 assert.equal(parseIgEmbed('"contextJSON":null'), null);
+
+// Signed-in v1 API. Real pair from Instagram's embed data: shortcode BQ0dSaohpPW has id 1455917388444111830.
+assert.equal(igMediaId('BQ0dSaohpPW'), '1455917388444111830');
+const v1 = parseIgV1({ items: [{ user: { username: 'adult_only' }, carousel_media: [
+  { image_versions2: { candidates: [{ url: 'https://cdn/i1080.jpg', width: 1080, height: 1350 }, { url: 'https://cdn/i640.jpg', width: 640, height: 800 }, { url: 'https://cdn/i320.jpg', width: 320, height: 400 }] } },
+  { video_duration: 12, video_versions: [{ url: 'https://cdn/v480.mp4', width: 480, height: 854 }, { url: 'https://cdn/v1080.mp4', width: 1080, height: 1920 }],
+    image_versions2: { candidates: [{ url: 'https://cdn/c1080.jpg', width: 1080, height: 1920 }, { url: 'https://cdn/c640.jpg', width: 640, height: 1138 }] } },
+] }] });
+assert.equal(v1!.author, '@adult_only');
+assert.deepEqual(v1!.items.map((i) => [i.url, i.type, i.w, i.thumb]), [
+  ['https://cdn/i1080.jpg', 'IMG', 1080, 'https://cdn/i640.jpg'],
+  ['https://cdn/v1080.mp4', 'VID', 1080, 'https://cdn/c640.jpg'],
+]);
+assert.equal(parseIgV1({ items: [] }), null);
+
+// Session cache: the same link (ignoring query/trailing slash) is read once.
+assert.equal(extract('https://i.redd.it/abc.jpg'), extract('https://i.redd.it/abc.jpg/?utm=1'));
+
+// Instagram pacing: lookups run one at a time, IG_GAP_MS apart.
+const stamps: number[] = [];
+await Promise.all([igThrottle(async () => stamps.push(Date.now())), igThrottle(async () => stamps.push(Date.now()))]);
+assert.ok(stamps[1] - stamps[0] >= IG_GAP_MS - 20, `second lookup waited ${stamps[1] - stamps[0]}ms`);
+
+// "Please wait" starts a 2 min cooldown; lookups fail fast during it; a repeat doubles it.
+const first = await igThrottle(async () => igCooldown()).catch((e) => e);
+assert.ok(first instanceof RateLimited);
+assert.ok(Math.abs(first.retryAt - Date.now() - 120_000) < 5_000);
+const during = await igThrottle(async () => 'should not run').catch((e) => e);
+assert.ok(during instanceof RateLimited && during.retryAt === first.retryAt);
+assert.throws(() => igCooldown(), (e: RateLimited) => Math.abs(e.retryAt - Date.now() - 240_000) < 5_000);
 
 console.log('extract: all checks passed');

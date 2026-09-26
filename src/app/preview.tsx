@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BackButton, Btn, Press, Tag, Txt } from '@/components/ui';
 import { F, T } from '@/constants/theme';
-import { extract, previewOf, thumbPreviewOf, type MediaItem, type Post } from '@/lib/extract';
+import { extract, previewOf, RateLimited, thumbPreviewOf, type MediaItem, type Post } from '@/lib/extract';
 import { enqueue, folderKey, folderLabel, setPost, useApp } from '@/lib/store';
 
 const kind = (it: MediaItem) => (it.type === 'VID' ? 'Video' : it.type === 'GIF' ? 'GIF' : 'Photo');
@@ -63,6 +63,22 @@ export default function Preview() {
   // Preview images are memory-only (never written to disk); drop them when this screen closes.
   useEffect(() => () => void Image.clearMemoryCache(), []);
 
+  // Instagram "please wait": count down, then try the same link again automatically.
+  const [retryAt, setRetryAt] = useState<number | null>(null);
+  const [now, setNow] = useState(0);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!retryAt) return;
+    const t = setInterval(() => {
+      setNow(Date.now());
+      if (Date.now() >= retryAt) {
+        setRetryAt(null);
+        setAttempt((a) => a + 1);
+      }
+    }, 1000);
+    return () => clearInterval(t);
+  }, [retryAt]);
+
   useEffect(() => {
     let live = true;
     extract(url)
@@ -72,12 +88,19 @@ export default function Preview() {
         setLocal(p);
         setPost(p); // the picker sheet reads it from the store
       })
-      .catch((e: Error) => live && setError(e.message));
+      .catch((e: Error) => {
+        if (!live) return;
+        if (e instanceof RateLimited) {
+          setNow(Date.now());
+          setRetryAt(e.retryAt);
+        }
+        else setError(e.message);
+      });
     return () => {
       live = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetch once per link
-  }, [url]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetch once per link (and per automatic retry)
+  }, [url, attempt]);
 
   const loaded = post && !error;
   const items = post?.items ?? [];
@@ -99,7 +122,14 @@ export default function Preview() {
       </View>
 
       <ScrollView contentContainerStyle={{ gap: 14, paddingTop: 14, paddingBottom: 16 }}>
-        {error ? (
+        {retryAt ? (
+          <Animated.View entering={FadeIn.duration(200)} style={[styles.empty, { marginHorizontal: 16 }]}>
+            <Txt style={{ textAlign: 'center', fontFamily: F.semibold }}>Instagram asked us to slow down</Txt>
+            <Txt v="sub" style={{ textAlign: 'center', fontSize: 13.5 }}>
+              {`Too many lookups from this network. Retrying automatically in ${fmtDur(Math.max(0, (retryAt - now) / 1000))}.`}
+            </Txt>
+          </Animated.View>
+        ) : error ? (
           <Animated.View entering={FadeIn.duration(200)} style={[styles.empty, { marginHorizontal: 16 }]}>
             <Txt style={{ textAlign: 'center', fontFamily: F.semibold }}>{"Couldn't get media from this link"}</Txt>
             <Txt v="sub" style={{ textAlign: 'center', fontSize: 13.5 }}>{error}</Txt>
@@ -175,14 +205,14 @@ export default function Preview() {
             <View style={{ paddingHorizontal: 16, gap: 8 }}>
               {post.nsfw ? null : (
                 <View style={{ flexDirection: 'row', gap: 8 }} accessibilityRole="radiogroup">
-                  {(['photos', 'files'] as const).map((k) => (
+                  {(settings.folderUri ? (['photos', 'files', 'folder'] as const) : (['photos', 'files'] as const)).map((k) => (
                     <Press
                       key={k}
                       accessibilityRole="radio"
                       accessibilityState={{ selected: saveTo === k }}
                       onPress={() => setSaveTo(k)}
                       style={[styles.dest, { borderColor: saveTo === k ? T.accent : T.line, backgroundColor: saveTo === k ? T.soft : 'transparent', transitionProperty: ['borderColor', 'backgroundColor'], transitionDuration: 180 }]}>
-                      <Txt style={{ fontFamily: F.semibold, fontSize: 13, color: saveTo === k ? T.softInk : T.sub }}>{k === 'photos' ? `${Platform.OS === 'ios' ? 'Photos' : 'Gallery'} album` : 'App folder'}</Txt>
+                      <Txt style={{ fontFamily: F.semibold, fontSize: 13, color: saveTo === k ? T.softInk : T.sub }}>{k === 'photos' ? `${Platform.OS === 'ios' ? 'Photos' : 'Gallery'} album` : k === 'folder' ? settings.folderName : 'App folder'}</Txt>
                     </Press>
                   ))}
                 </View>

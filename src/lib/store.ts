@@ -6,7 +6,7 @@ import { useSyncExternalStore } from 'react';
 
 import type { MediaItem, MediaType, Post } from '@/lib/extract';
 
-export type SaveTo = 'photos' | 'files';
+export type SaveTo = 'photos' | 'files' | 'folder'; // folder = a device folder picked with Android's folder picker
 
 export type Settings = {
   onboarded: boolean;
@@ -18,6 +18,9 @@ export type Settings = {
   blurNsfw: boolean;
   lockPrivate: boolean;
   bubble: boolean; // Android floating download bubble (see src/lib/bubble.ts)
+  igSignedIn: boolean;
+  folderUri?: string; // content:// tree URI of the picked device folder (Android; permission persists)
+  folderName?: string; // an Instagram session exists in the app's WebView (see src/components/ig-session.tsx)
 };
 
 export type Saved = {
@@ -59,6 +62,7 @@ type State = {
   post: Post | null; // the post open in Preview
   unlocked: boolean; // Private folder unlocked for this session
   toast: string | null;
+  igSignOut: number; // bumped to ask IgSession to log out
 };
 
 const DEFAULTS: Settings = {
@@ -71,6 +75,7 @@ const DEFAULTS: Settings = {
   blurNsfw: true,
   lockPrivate: true,
   bubble: false,
+  igSignedIn: false,
 };
 
 export const ROOT = new Directory(Paths.document, 'MediaDL');
@@ -86,7 +91,7 @@ function load(): Pick<State, 'settings' | 'history'> {
   return { settings: DEFAULTS, history: [] };
 }
 
-let state: State = { ...load(), jobs: [], post: null, unlocked: false, toast: null };
+let state: State = { ...load(), jobs: [], post: null, unlocked: false, toast: null, igSignOut: 0 };
 const listeners = new Set<() => void>();
 
 function set(patch: Partial<State> | ((s: State) => Partial<State>)) {
@@ -113,6 +118,7 @@ export function updateSettings(patch: Partial<Settings>) {
   set((s) => ({ settings: { ...s.settings, ...patch }, unlocked: 'lockPrivate' in patch ? false : s.unlocked }));
 }
 
+export const signOutInstagram = () => set((s) => ({ igSignOut: s.igSignOut + 1 }));
 export const setPost = (post: Post | null) => set({ post });
 
 /** Face ID / fingerprint (falls back to the device passcode). Returns whether the Private folder is open. */
@@ -146,6 +152,7 @@ export const folderName = (k: string) => (k === 'All' ? 'All downloads' : k === 
 /** Human-readable location shown in the UI. */
 export function folderLabel(key: string, saveTo: SaveTo = state.settings.saveTo) {
   if (key !== 'Private' && saveTo === 'photos') return 'Photos › Media Downloader';
+  if (key !== 'Private' && saveTo === 'folder') return `Device › ${state.settings.folderName ?? 'chosen folder'}`;
   return 'Files › MediaDL' + (key === 'All' ? '' : key === 'Private' ? '/.private' : '/' + key);
 }
 
@@ -189,15 +196,15 @@ function pump() {
 }
 
 // Loaded lazily: Expo Go on Android ships without this native module, and a top-level import crashes every route.
-async function mediaLibrary(): Promise<typeof ML> {
-  if (!requireOptionalNativeModule('ExpoMediaLibraryNext'))
-    throw new Error('Saving to Photos needs a development build. Saved to the app folder instead.');
-  return import('expo-media-library');
-}
+// Two Photos paths: the current API (needs a development build), and the legacy one Expo Go still ships.
+// Expo Go on Android only gets write access, so there the file lands in the gallery without the album.
+const hasNextLibrary = () => !!requireOptionalNativeModule('ExpoMediaLibraryNext');
+const legacyLibrary = () => import('expo-media-library/legacy');
 
 export async function hasPhotos(): Promise<boolean> {
   try {
-    return (await (await mediaLibrary()).getPermissionsAsync()).granted;
+    if (hasNextLibrary()) return (await (await import('expo-media-library')).getPermissionsAsync()).granted;
+    return (await (await legacyLibrary()).getPermissionsAsync(true)).granted;
   } catch {
     return false;
   }
@@ -205,7 +212,8 @@ export async function hasPhotos(): Promise<boolean> {
 
 export async function requestPhotos(): Promise<boolean> {
   try {
-    return (await (await mediaLibrary()).requestPermissionsAsync()).granted;
+    if (hasNextLibrary()) return (await (await import('expo-media-library')).requestPermissionsAsync()).granted;
+    return (await (await legacyLibrary()).requestPermissionsAsync(true)).granted;
   } catch {
     return false;
   }
@@ -213,13 +221,20 @@ export async function requestPhotos(): Promise<boolean> {
 
 let album: ML.Album | null = null;
 async function saveToPhotos(uri: string) {
-  const MediaLibrary = await mediaLibrary();
-  const perm = await MediaLibrary.requestPermissionsAsync();
-  if (!perm.granted) throw new Error('Photos access denied. Saved to the app folder instead.');
+  if (!(await requestPhotos())) throw new Error('Gallery access denied. Saved to the app folder instead.');
+  if (!hasNextLibrary()) return (await legacyLibrary()).saveToLibraryAsync(uri);
+  const MediaLibrary = await import('expo-media-library');
   album ??= await MediaLibrary.Album.get('Media Downloader');
   if (album) return void (await MediaLibrary.Asset.create(uri, album));
   const asset = await MediaLibrary.Asset.create(uri);
   album = await MediaLibrary.Album.create('Media Downloader', [asset]);
+}
+
+/** Copies a finished download into the device folder the user picked (Android folder picker, persistent access). */
+async function saveToFolder(file: File) {
+  const uri = state.settings.folderUri;
+  if (!uri) throw new Error('No device folder chosen. Saved to the app folder instead.');
+  await file.copy(new Directory(uri));
 }
 
 async function run(job: Job) {
@@ -244,9 +259,9 @@ async function run(job: Job) {
       },
     });
     let warning: string | undefined;
-    if (job.saveTo === 'photos' && !post.nsfw) {
-      await saveToPhotos(file.uri).catch((e: Error) => (warning = e.message));
-    }
+    if (!post.nsfw && job.saveTo === 'photos') await saveToPhotos(file.uri).catch((e: Error) => (warning = e.message));
+    if (!post.nsfw && job.saveTo === 'folder')
+      await saveToFolder(file).catch((e: Error) => (warning = `Couldn't copy to ${state.settings.folderName ?? 'your folder'}: ${e.message}`));
     const saved: Saved = {
       id: job.id + '_' + Date.now(),
       name: file.name,
