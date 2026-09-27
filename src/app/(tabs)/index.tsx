@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { ScrollView, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Btn, Card, Thumb, Txt } from '@/components/ui';
+import { Btn, Card, Press, Thumb, Txt } from '@/components/ui';
 import { F, T } from '@/constants/theme';
 import { thumbOf, useApp } from '@/lib/store';
 
@@ -23,19 +23,30 @@ export default function Home() {
         </View>
 
         <Card style={{ padding: 12, gap: 10 }}>
-          <TextInput
-            value={value}
-            onChangeText={setValue}
-            placeholder="https://reddit.com/r/…"
-            placeholderTextColor={T.sub}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-            returnKeyType="go"
-            onSubmitEditing={() => value && open(value)}
-            accessibilityLabel="Post link"
-            style={{ height: 46, borderRadius: T.rs, borderWidth: 1, borderColor: T.line, backgroundColor: T.bg, color: T.ink, paddingHorizontal: 12, fontFamily: F.mono, fontSize: 13.5 }}
-          />
+          <View style={{ position: 'relative' }}>
+            <TextInput
+              value={value}
+              onChangeText={setValue}
+              placeholder="https://reddit.com/r/…"
+              placeholderTextColor={T.sub}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              returnKeyType="go"
+              onSubmitEditing={() => value && open(value)}
+              accessibilityLabel="Post link"
+              style={{ height: 46, borderRadius: T.rs, borderWidth: 1, borderColor: T.line, backgroundColor: T.bg, color: T.ink, paddingLeft: 12, paddingRight: value ? 42 : 12, fontFamily: F.mono, fontSize: 13.5 }}
+            />
+            {value ? (
+              <Press
+                accessibilityRole="button"
+                accessibilityLabel="Clear post link"
+                onPress={() => setValue('')}
+                style={{ position: 'absolute', top: 5, right: 5, width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' }}>
+                <Txt style={{ color: T.sub, fontSize: 24, lineHeight: 26 }}>×</Txt>
+              </Press>
+            ) : null}
+          </View>
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <Btn label="Paste" kind="raised" onPress={async () => setValue(await Clipboard.getStringAsync())} />
             <Btn label="Fetch media" disabled={!value.trim()} onPress={() => open(value)} style={{ flex: 1 }} />

@@ -40,7 +40,7 @@ export default function Location() {
         ) : null}
       </View>
       <Txt v="sub" style={{ fontSize: 12 }}>
-        Files you already downloaded stay where they are. The Private (NSFW) folder always stays hidden from the {gallery.toLowerCase()}.
+        Files you already downloaded stay where they are. Private (NSFW) files also remain protected inside the app, with a copy saved to the {gallery.toLowerCase()} when you choose this location.
       </Txt>
       <Btn
         label="Use this location"

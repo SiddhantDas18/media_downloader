@@ -11,7 +11,7 @@ import { enqueue, useApp, type SaveTo } from '@/lib/store';
 
 export default function Picker() {
   const post = useApp((s) => s.post);
-  const params = useLocalSearchParams<{ slide: string; saveTo?: SaveTo }>();
+  const params = useLocalSearchParams<{ slide: string; saveTo?: SaveTo; albumName?: string }>();
   const slide = Number(params.slide ?? 0);
   const n = post?.items.length ?? 0;
   const [mode, setMode] = useState<'all' | 'choose' | 'one'>('all');
@@ -73,7 +73,7 @@ export default function Picker() {
         label={label}
         disabled={!pick.length}
         onPress={() => {
-          enqueue(post, pick, params.saveTo);
+          enqueue(post, pick, params.saveTo, params.albumName);
           router.dismissTo('/queue');
         }}
         style={{ height: 52, borderRadius: T.r }}

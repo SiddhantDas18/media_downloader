@@ -51,6 +51,7 @@ export type Job = {
   total: number;
   status: 'waiting' | 'running' | 'done' | 'failed';
   saveTo: SaveTo; // chosen per download; defaults to the Settings value
+  albumName?: string;
   error?: string;
   startedAt?: number;
 };
@@ -162,7 +163,7 @@ const pad = (n: number) => String(n).padStart(2, '0');
 const MAX_PARALLEL = 2;
 let jobSeq = 0;
 
-export function enqueue(post: Post, indexes: number[], saveTo: SaveTo = state.settings.saveTo) {
+export function enqueue(post: Post, indexes: number[], saveTo: SaveTo = state.settings.saveTo, albumName?: string) {
   const jobs: Job[] = indexes.map((i) => ({
     id: `j${++jobSeq}`,
     name: `${post.source.toLowerCase()}_${post.slug}_${pad(i + 1)}.${post.items[i].fmt.toLowerCase()}`,
@@ -172,6 +173,7 @@ export function enqueue(post: Post, indexes: number[], saveTo: SaveTo = state.se
     total: 0,
     status: 'waiting',
     saveTo,
+    albumName,
   }));
   set((s) => ({ jobs: [...s.jobs.filter((j) => j.status !== 'done'), ...jobs] }));
   pump();
@@ -220,14 +222,41 @@ export async function requestPhotos(): Promise<boolean> {
 }
 
 let album: ML.Album | null = null;
-async function saveToPhotos(uri: string) {
+const albums = new Map<string, ML.Album | null>();
+
+export async function getPhotoAlbums(): Promise<string[]> {
+  if (!(await requestPhotos())) return [];
+  try {
+    if (hasNextLibrary()) {
+      const MediaLibrary = await import('expo-media-library');
+      const names = await Promise.all((await MediaLibrary.Album.getAll()).map((a) => a.getTitle()));
+      return [...new Set(names.filter(Boolean))].sort();
+    }
+    const legacy = await legacyLibrary();
+    return [...new Set((await legacy.getAlbumsAsync({ includeSmartAlbums: false })).map((a) => a.title).filter(Boolean))].sort();
+  } catch {
+    return [];
+  }
+}
+
+async function saveToPhotos(uri: string, albumName = 'Media Downloader') {
   if (!(await requestPhotos())) throw new Error('Gallery access denied. Saved to the app folder instead.');
-  if (!hasNextLibrary()) return (await legacyLibrary()).saveToLibraryAsync(uri);
+  if (!hasNextLibrary()) {
+    const legacy = await legacyLibrary();
+    const asset = await legacy.createAssetAsync(uri);
+    const target = await legacy.getAlbumAsync(albumName).catch(() => null);
+    if (target) await legacy.addAssetsToAlbumAsync(asset, target, true);
+    else await legacy.createAlbumAsync(albumName, asset, true);
+    return;
+  }
   const MediaLibrary = await import('expo-media-library');
-  album ??= await MediaLibrary.Album.get('Media Downloader');
-  if (album) return void (await MediaLibrary.Asset.create(uri, album));
+  if (albumName === 'Media Downloader') album ??= await MediaLibrary.Album.get(albumName);
+  else if (!albums.has(albumName)) albums.set(albumName, await MediaLibrary.Album.get(albumName));
+  const target = albumName === 'Media Downloader' ? album : albums.get(albumName);
+  if (target) return void (await MediaLibrary.Asset.create(uri, target));
   const asset = await MediaLibrary.Asset.create(uri);
-  album = await MediaLibrary.Album.create('Media Downloader', [asset]);
+  if (albumName === 'Media Downloader') album = await MediaLibrary.Album.create(albumName, [asset]);
+  else albums.set(albumName, await MediaLibrary.Album.create(albumName, [asset]));
 }
 
 /** Copies a finished download into the device folder the user picked (Android folder picker, persistent access). */
@@ -259,7 +288,7 @@ async function run(job: Job) {
       },
     });
     let warning: string | undefined;
-    if (!post.nsfw && job.saveTo === 'photos') await saveToPhotos(file.uri).catch((e: Error) => (warning = e.message));
+    if (job.saveTo === 'photos') await saveToPhotos(file.uri, job.albumName).catch((e: Error) => (warning = e.message));
     if (!post.nsfw && job.saveTo === 'folder')
       await saveToFolder(file).catch((e: Error) => (warning = `Couldn't copy to ${state.settings.folderName ?? 'your folder'}: ${e.message}`));
     const saved: Saved = {

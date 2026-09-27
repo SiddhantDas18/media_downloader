@@ -1,14 +1,14 @@
 import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Platform, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Modal, Platform, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BackButton, Btn, Press, Tag, Txt } from '@/components/ui';
 import { F, T } from '@/constants/theme';
 import { extract, previewOf, RateLimited, thumbPreviewOf, type MediaItem, type Post } from '@/lib/extract';
-import { enqueue, folderKey, folderLabel, setPost, useApp } from '@/lib/store';
+import { enqueue, folderKey, folderLabel, getPhotoAlbums, setPost, useApp } from '@/lib/store';
 
 const kind = (it: MediaItem) => (it.type === 'VID' ? 'Video' : it.type === 'GIF' ? 'GIF' : 'Photo');
 const fmtDur = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
@@ -55,6 +55,9 @@ export default function Preview() {
   const [error, setError] = useState<string | null>(null);
   const [slide, setSlide] = useState(0);
   const [saveTo, setSaveTo] = useState(settings.saveTo); // this download only; Settings holds the default
+  const [albumName, setAlbumName] = useState('Media Downloader');
+  const [albums, setAlbums] = useState<string[]>([]);
+  const [albumPickerOpen, setAlbumPickerOpen] = useState(false);
   const [firstReady, setFirstReady] = useState(false); // filmstrip thumbnails wait for the first visible image
   const list = useRef<FlatList<MediaItem>>(null);
   const { width } = useWindowDimensions();
@@ -109,6 +112,12 @@ export default function Preview() {
   const go = (i: number) => {
     list.current?.scrollToIndex({ index: i, animated: true });
     setSlide(i);
+  };
+  const chooseAlbum = async () => {
+    const names = await getPhotoAlbums();
+    if (!names.length) return Alert.alert('Gallery access needed', 'Allow photo access to choose a gallery album.');
+    setAlbums(names.includes(albumName) ? names : [albumName, ...names]);
+    setAlbumPickerOpen(true);
   };
 
   return (
@@ -217,6 +226,12 @@ export default function Preview() {
                   ))}
                 </View>
               )}
+              {saveTo === 'photos' ? (
+                <Press accessibilityRole="button" onPress={chooseAlbum} style={styles.albumChoice}>
+                  <Txt v="sub">Gallery album</Txt>
+                  <Txt style={{ fontFamily: F.semibold, color: T.softInk }}>{albumName} ›</Txt>
+                </Press>
+              ) : null}
               <Txt v="sub">
                 Saved as the original file, without re-encoding. To:{' '}
                 <Txt v="mono" style={{ color: T.ink }}>{folderLabel(folderKey(post.source, post.nsfw), saveTo)}</Txt>
@@ -228,18 +243,34 @@ export default function Preview() {
 
       {loaded ? (
         <View style={styles.footer}>
-          <Btn label="Save this" kind="raised" onPress={() => { enqueue(post, [slide], saveTo); router.navigate('/queue'); }} style={{ flex: 1, height: 50, borderRadius: T.r }} />
+          <Btn label="Save this" kind="raised" onPress={() => { enqueue(post, [slide], saveTo, albumName); router.navigate('/queue'); }} style={{ flex: 1, height: 50, borderRadius: T.r }} />
           <Btn
             label={n > 1 ? `Save all ${n}` : 'Save'}
             onPress={() => {
-              if (n > 1 && settings.askBulk) return router.push({ pathname: '/picker', params: { slide, saveTo } });
-              enqueue(post, items.map((_, i) => i), saveTo);
+              if (n > 1 && settings.askBulk) return router.push({ pathname: '/picker', params: { slide, saveTo, albumName } });
+              enqueue(post, items.map((_, i) => i), saveTo, albumName);
               router.navigate('/queue');
             }}
             style={{ flex: 1.4, height: 50, borderRadius: T.r }}
           />
         </View>
       ) : null}
+      <Modal visible={albumPickerOpen} transparent animationType="fade" onRequestClose={() => setAlbumPickerOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.albumModal}>
+            <Txt v="title">Choose gallery album</Txt>
+            <ScrollView style={{ maxHeight: 360 }}>
+              {albums.map((name) => (
+                <Press key={name} onPress={() => { setAlbumName(name); setAlbumPickerOpen(false); }} style={styles.albumRow}>
+                  <Txt style={{ flex: 1 }}>{name}</Txt>
+                  {name === albumName ? <Txt style={{ color: T.accent }}>Selected</Txt> : null}
+                </Press>
+              ))}
+            </ScrollView>
+            <Btn label="Cancel" kind="raised" onPress={() => setAlbumPickerOpen(false)} />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -248,6 +279,10 @@ const styles = StyleSheet.create({
   slide: { aspectRatio: 4 / 5, backgroundColor: T.surface, alignItems: 'center', justifyContent: 'center' },
   empty: { padding: 32, gap: 8, borderRadius: T.r, borderWidth: 1, borderStyle: 'dashed', borderColor: T.line },
   dest: { flex: 1, height: 36, borderRadius: 999, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
+  albumChoice: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 42, paddingHorizontal: 12, borderRadius: T.rs, borderWidth: 1, borderColor: T.line, backgroundColor: T.surface },
+  modalBackdrop: { flex: 1, justifyContent: 'center', padding: 20, backgroundColor: 'rgba(0,0,0,0.65)' },
+  albumModal: { gap: 12, padding: 16, borderRadius: T.r, backgroundColor: T.surface, borderWidth: 1, borderColor: T.line },
+  albumRow: { flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingHorizontal: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: T.line },
   loading: { position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center', gap: 8 },
   play: { width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center', paddingLeft: 4 },
   gifPill: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.9)' },
