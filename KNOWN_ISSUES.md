@@ -33,3 +33,9 @@
 - Settings → Accounts → Instagram opens instagram.com's own login in a WebView (`src/app/instagram-login.tsx`). While signed in, a hidden instagram.com WebView (`src/components/ig-session.tsx`) runs `/api/v1/media/<id>/info/` with the user's own cookies. That covers age-restricted posts, full-size photos and real reel videos (issues 1 and 2).
 - Verified offline only: the shortcode→id conversion against real Instagram data, and the response parser (`node src/lib/extract.check.ts`).
 - **To check on the phone:** sign in, paste an age-restricted post and a reel, then sign out and confirm the Settings row flips back. Sign-out calls Instagram's web logout endpoint (`/api/v1/web/accounts/logout/ajax/`); if that endpoint changed, the cookies can outlive the "signed out" state.
+
+### 6. Signed-in age-restricted posts still failed (fix in, untested)
+- **Seen:** 2026-09-29, signed in, age-restricted post wouldn't download.
+- **Likely cause:** the hidden WebView sent Instagram's *desktop* web app id (`936619743392459`) from a *mobile* browser, which Instagram rejects ("useragent mismatch"). Errors were also swallowed (non-JSON bodies never resolved, so every request hit the 15 s timeout), and the app then fell back to logged-out lookups that can't see age-restricted posts.
+- **Fix:** `src/components/ig-session.tsx` now sends the app id the page itself was served with (mobile-web fallback `1217981644879628`), plus the CSRF token and www-claim like instagram.com does. Instagram's own error text now reaches the Preview error message.
+- **To check:** paste an age-restricted post while signed in. If it still fails, the message now says what Instagram answered. Send that text.

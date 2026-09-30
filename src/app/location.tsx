@@ -5,18 +5,15 @@ import { Platform, ScrollView, View } from 'react-native';
 
 import { Btn, Radio, Txt } from '@/components/ui';
 import { T } from '@/constants/theme';
-import { showToast, updateSettings, useApp, type SaveTo } from '@/lib/store';
+import { folderLabel, showToast, updateSettings, useApp, type SaveTo } from '@/lib/store';
 
 const gallery = Platform.OS === 'ios' ? 'Photos' : 'Gallery';
-const OPTIONS: [SaveTo, string, string][] = [
-  ['photos', `${gallery} › Media Downloader`, `Shows up in your ${gallery} app in a Media Downloader album. A copy also stays in the app.`],
-  ['files', 'App folder only', Platform.OS === 'ios' ? 'Files › On My iPhone › Media Downloader › MediaDL' : 'Kept inside the app. Share or export from the viewer.'],
-];
 
 export default function Location() {
-  const { saveTo, folderName } = useApp((s) => s.settings);
+  const { saveTo, folderName, albumName } = useApp((s) => s.settings);
   const [draft, setDraft] = useState(saveTo);
-  // Android only: the system folder picker grants lasting access, so downloads can be copied into any folder.
+
+  // Android only: the system folder picker grants lasting access, so the folder is picked once and remembered.
   const pickFolder = async () => {
     try {
       const dir = await Directory.pickDirectoryAsync();
@@ -25,28 +22,39 @@ export default function Location() {
     } catch {}
   };
 
+  const options: [SaveTo, string, string][] = [
+    ['photos', `${gallery} › ${albumName || 'Media Downloader'}`, `Straight into your ${gallery} app. Nothing is kept inside this app.`],
+    ...(Platform.OS === 'android' && folderName
+      ? [['folder', `Device › ${folderName}`, 'Straight into this folder. Nothing is kept inside this app.'] as [SaveTo, string, string]]
+      : []),
+    ['files', 'Private app folder', 'Kept only inside this app, hidden from your gallery. Share or export from the viewer.'],
+  ];
+
   return (
     <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 24, paddingBottom: 34, gap: 12 }}>
       <View>
         <Txt v="display" style={{ fontSize: 24, lineHeight: 28 }}>Save location</Txt>
-        <Txt v="sub" style={{ fontSize: 13, marginTop: 4 }}>Where new downloads go. Source folders (Reddit, Instagram…) are created inside it.</Txt>
+        <Txt v="sub" style={{ fontSize: 13, marginTop: 4 }}>Where new downloads go. Your choice is remembered until you change it.</Txt>
       </View>
       <View style={{ gap: 8 }}>
-        {OPTIONS.map(([key, title, sub]) => (
+        {options.map(([key, title, sub]) => (
           <Radio key={key} on={draft === key} title={title} sub={sub} onPress={() => setDraft(key)} />
         ))}
-        {Platform.OS === 'android' ? (
-          <Radio on={draft === 'folder'} title={folderName ? `Device › ${folderName}` : 'Choose a folder on this device…'} sub={folderName ? 'Tap to pick a different folder' : 'Downloads, DCIM, or any folder you pick'} onPress={pickFolder} />
-        ) : null}
       </View>
-      <Txt v="sub" style={{ fontSize: 12 }}>
-        Files you already downloaded stay where they are. Private (NSFW) files also remain protected inside the app, with a copy saved to the {gallery.toLowerCase()} when you choose this location.
-      </Txt>
+      {Platform.OS === 'android' ? (
+        <Btn
+          label={folderName ? 'Pick a different device folder' : 'Choose a folder on this device…'}
+          kind="raised"
+          onPress={pickFolder}
+          style={{ borderRadius: T.r }}
+        />
+      ) : null}
+      <Txt v="sub" style={{ fontSize: 12 }}>Files you already downloaded stay where they are.</Txt>
       <Btn
         label="Use this location"
         onPress={() => {
           updateSettings({ saveTo: draft });
-          showToast('New downloads will be saved to ' + (draft === 'folder' ? `Device › ${folderName}` : OPTIONS.find((o) => o[0] === draft)![1]));
+          showToast('New downloads will be saved to ' + folderLabel('All', draft));
           router.back();
         }}
         style={{ height: 52, borderRadius: T.r }}

@@ -8,7 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { BackButton, Btn, Press, Tag, Txt } from '@/components/ui';
 import { F, T } from '@/constants/theme';
 import { extract, previewOf, RateLimited, thumbPreviewOf, type MediaItem, type Post } from '@/lib/extract';
-import { enqueue, folderKey, folderLabel, getPhotoAlbums, setPost, useApp } from '@/lib/store';
+import { enqueue, folderKey, folderLabel, getPhotoAlbums, setPost, updateSettings, useApp, type SaveTo } from '@/lib/store';
 
 const kind = (it: MediaItem) => (it.type === 'VID' ? 'Video' : it.type === 'GIF' ? 'GIF' : 'Photo');
 const fmtDur = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
@@ -54,10 +54,19 @@ export default function Preview() {
   const [post, setLocal] = useState<Post | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [slide, setSlide] = useState(0);
-  const [saveTo, setSaveTo] = useState(settings.saveTo); // this download only; Settings holds the default
-  const [albumName, setAlbumName] = useState('Media Downloader');
+  const saveTo = settings.saveTo;
+  const albumName = settings.albumName || 'Media Downloader';
   const [albums, setAlbums] = useState<string[]>([]);
   const [albumPickerOpen, setAlbumPickerOpen] = useState(false);
+
+  const onSelectSaveTo = (k: SaveTo) => {
+    updateSettings({ saveTo: k });
+  };
+
+  const onSelectAlbum = (name: string) => {
+    updateSettings({ albumName: name });
+    setAlbumPickerOpen(false);
+  };
   const [firstReady, setFirstReady] = useState(false); // filmstrip thumbnails wait for the first visible image
   const list = useRef<FlatList<MediaItem>>(null);
   const { width } = useWindowDimensions();
@@ -211,30 +220,35 @@ export default function Preview() {
                 </View>
               ))}
             </View>
-            <View style={{ paddingHorizontal: 16, gap: 8 }}>
-              {post.nsfw ? null : (
-                <View style={{ flexDirection: 'row', gap: 8 }} accessibilityRole="radiogroup">
-                  {(settings.folderUri ? (['photos', 'files', 'folder'] as const) : (['photos', 'files'] as const)).map((k) => (
-                    <Press
-                      key={k}
-                      accessibilityRole="radio"
-                      accessibilityState={{ selected: saveTo === k }}
-                      onPress={() => setSaveTo(k)}
-                      style={[styles.dest, { borderColor: saveTo === k ? T.accent : T.line, backgroundColor: saveTo === k ? T.soft : 'transparent', transitionProperty: ['borderColor', 'backgroundColor'], transitionDuration: 180 }]}>
-                      <Txt style={{ fontFamily: F.semibold, fontSize: 13, color: saveTo === k ? T.softInk : T.sub }}>{k === 'photos' ? `${Platform.OS === 'ios' ? 'Photos' : 'Gallery'} album` : k === 'folder' ? settings.folderName : 'App folder'}</Txt>
-                    </Press>
-                  ))}
-                </View>
-              )}
+            <View style={styles.saveCard}>
+              <Txt v="label">Save to</Txt>
+              <View style={{ flexDirection: 'row', gap: 8 }} accessibilityRole="radiogroup">
+                {/* The private app folder is a Settings-only choice; it shows here only when it's already the default. */}
+                {(['photos', ...(settings.folderUri ? ['folder'] : []), ...(saveTo === 'files' ? ['files'] : [])] as SaveTo[]).map((k) => (
+                  <Press
+                    key={k}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: saveTo === k }}
+                    onPress={() => onSelectSaveTo(k)}
+                    style={[styles.dest, { borderColor: saveTo === k ? T.accent : T.line, backgroundColor: saveTo === k ? T.soft : 'transparent', transitionProperty: ['borderColor', 'backgroundColor'], transitionDuration: 180 }]}>
+                    <Txt style={{ fontFamily: F.semibold, fontSize: 13, color: saveTo === k ? T.softInk : T.sub }}>{k === 'photos' ? `${Platform.OS === 'ios' ? 'Photos' : 'Gallery'} album` : k === 'folder' ? settings.folderName : 'Private app folder'}</Txt>
+                  </Press>
+                ))}
+              </View>
               {saveTo === 'photos' ? (
                 <Press accessibilityRole="button" onPress={chooseAlbum} style={styles.albumChoice}>
                   <Txt v="sub">Gallery album</Txt>
                   <Txt style={{ fontFamily: F.semibold, color: T.softInk }}>{albumName} ›</Txt>
                 </Press>
               ) : null}
+              {post.nsfw && settings.saveNsfwToPrivate ? (
+                <Txt v="sub" style={{ color: T.softInk }}>
+                  NSFW item will be saved to your locked Private folder.
+                </Txt>
+              ) : null}
               <Txt v="sub">
-                Saved as the original file, without re-encoding. To:{' '}
-                <Txt v="mono" style={{ color: T.ink }}>{folderLabel(folderKey(post.source, post.nsfw), saveTo)}</Txt>
+                Original file, no re-encoding →{' '}
+                <Txt v="mono" style={{ color: T.ink }}>{folderLabel(folderKey(post.source, post.nsfw), saveTo, albumName)}</Txt>
               </Txt>
             </View>
           </Animated.View>
@@ -261,7 +275,7 @@ export default function Preview() {
             <Txt v="title">Choose gallery album</Txt>
             <ScrollView style={{ maxHeight: 360 }}>
               {albums.map((name) => (
-                <Press key={name} onPress={() => { setAlbumName(name); setAlbumPickerOpen(false); }} style={styles.albumRow}>
+                <Press key={name} onPress={() => onSelectAlbum(name)} style={styles.albumRow}>
                   <Txt style={{ flex: 1 }}>{name}</Txt>
                   {name === albumName ? <Txt style={{ color: T.accent }}>Selected</Txt> : null}
                 </Press>
@@ -278,6 +292,7 @@ export default function Preview() {
 const styles = StyleSheet.create({
   slide: { aspectRatio: 4 / 5, backgroundColor: T.surface, alignItems: 'center', justifyContent: 'center' },
   empty: { padding: 32, gap: 8, borderRadius: T.r, borderWidth: 1, borderStyle: 'dashed', borderColor: T.line },
+  saveCard: { marginHorizontal: 16, gap: 10, padding: 14, borderRadius: T.r, backgroundColor: T.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: T.line },
   dest: { flex: 1, height: 36, borderRadius: 999, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
   albumChoice: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 42, paddingHorizontal: 12, borderRadius: T.rs, borderWidth: 1, borderColor: T.line, backgroundColor: T.surface },
   modalBackdrop: { flex: 1, justifyContent: 'center', padding: 20, backgroundColor: 'rgba(0,0,0,0.65)' },

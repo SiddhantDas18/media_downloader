@@ -319,13 +319,16 @@ async function instagram(url: URL): Promise<Omit<Post, 'url' | 'host' | 'source'
   if (!code) return null;
   let limited = false; // Instagram answered 401/429 ("please wait")
   // 0. Signed in: the user's own session sees everything they can see in Instagram, including age-restricted posts.
+  let signedInError: string | undefined; // why the signed-in lookup failed, shown to the user if nothing else works
   if (igSession) {
     const json = await igSession(`/api/v1/media/${igMediaId(code)}/info/`).catch((e: Error) => {
       limited ||= /\b(401|429)\b/.test(e.message);
+      signedInError = e.message;
       return null;
     });
     const post = parseIgV1(json);
     if (post) return post;
+    signedInError ??= json ? 'Instagram sent no media for this post' : undefined;
   }
   // 1. Public web GraphQL query: every carousel item, full-size photos and real video URLs.
   //    Without an X-CSRFToken header Instagram answers 403; any value passes for logged-out requests.
@@ -361,7 +364,7 @@ async function instagram(url: URL): Promise<Omit<Post, 'url' | 'host' | 'source'
   if (limited) igCooldown();
   throw new Error(
     igSession
-        ? "Couldn't read this Instagram post. It may be private or deleted."
+        ? `Couldn't read this Instagram post while signed in. ${signedInError ?? 'It may be private or deleted.'}`
         : "Couldn't read this Instagram post. If it's age-restricted or private, sign in to Instagram in Settings.",
   );
 }

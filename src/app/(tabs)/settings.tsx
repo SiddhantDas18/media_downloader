@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Card, Row, SectionLabel, SettingRow, Txt } from '@/components/ui';
 import { F, T } from '@/constants/theme';
 import { bubbleSupported, disableBubble, enableBubble, openOverlaySettings } from '@/lib/bubble';
-import { clearHistory, signOutInstagram, formatBytes, updateSettings, useApp } from '@/lib/store';
+import { clearHistory, folderLabel, formatBytes, signOutInstagram, updateSettings, useApp } from '@/lib/store';
 
 export default function Settings() {
   const st = useApp((s) => s.settings);
@@ -26,12 +26,12 @@ export default function Settings() {
             <View style={{ flex: 1, minWidth: 0 }}>
               <Txt>Save location</Txt>
               <Txt v="mono" numberOfLines={1} style={{ color: T.softInk, marginTop: 3 }}>
-                {st.saveTo === 'photos' ? `${Platform.OS === 'ios' ? 'Photos' : 'Gallery'} › Media Downloader` : 'Files › MediaDL'}
+                {folderLabel('All', st.saveTo, st.albumName)}
               </Txt>
             </View>
             <Txt v="sub" style={{ fontSize: 13 }}>Change ›</Txt>
           </Row>
-          <SettingRow title="Sort into folders by source" sub="MediaDL/Reddit, MediaDL/Instagram…" on={st.sortBySource} onPress={() => updateSettings({ sortBySource: !st.sortBySource })} />
+          <SettingRow title="Sort into folders by source" sub="App folder only: MediaDL/Reddit, MediaDL/Instagram…" on={st.sortBySource} onPress={() => updateSettings({ sortBySource: !st.sortBySource })} />
           <Row>
             <View style={{ flex: 1 }}>
               <Txt>File names</Txt>
@@ -98,6 +98,7 @@ export default function Settings() {
           <SettingRow first title="Allow NSFW content" sub="When off, NSFW posts are skipped and kept out of History" on={st.allowNsfw} onPress={() => updateSettings({ allowNsfw: !st.allowNsfw })} />
           {st.allowNsfw ? (
             <Animated.View entering={FadeInDown.duration(200)} exiting={FadeOutUp.duration(150)}>
+              <SettingRow indent title="Save NSFW to Private folder" sub="Route adult content to the locked .private folder instead of your normal download path" on={st.saveNsfwToPrivate} onPress={() => updateSettings({ saveNsfwToPrivate: !st.saveNsfwToPrivate })} />
               <SettingRow indent title="Blur thumbnails" sub="Tap a blurred item to reveal it" on={st.blurNsfw} onPress={() => updateSettings({ blurNsfw: !st.blurNsfw })} />
               <SettingRow indent title="Lock Private folder" sub={`Require ${bio} to open NSFW downloads`} on={st.lockPrivate} onPress={() => updateSettings({ lockPrivate: !st.lockPrivate })} />
             </Animated.View>

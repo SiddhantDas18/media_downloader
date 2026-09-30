@@ -3,6 +3,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 import * as LocalAuthentication from 'expo-local-authentication';
 import type * as ML from 'expo-media-library';
 import { useSyncExternalStore } from 'react';
+import { Platform } from 'react-native';
 
 import type { MediaItem, MediaType, Post } from '@/lib/extract';
 
@@ -11,6 +12,8 @@ export type SaveTo = 'photos' | 'files' | 'folder'; // folder = a device folder 
 export type Settings = {
   onboarded: boolean;
   saveTo: SaveTo;
+  albumName?: string; // chosen gallery album name (defaults to 'Media Downloader')
+  saveNsfwToPrivate: boolean; // whether to route NSFW downloads to the Private (.private) app folder
   sortBySource: boolean;
   watchClipboard: boolean;
   askBulk: boolean;
@@ -20,7 +23,8 @@ export type Settings = {
   bubble: boolean; // Android floating download bubble (see src/lib/bubble.ts)
   igSignedIn: boolean;
   folderUri?: string; // content:// tree URI of the picked device folder (Android; permission persists)
-  folderName?: string; // an Instagram session exists in the app's WebView (see src/components/ig-session.tsx)
+  folderName?: string;
+  lastClip?: string; // last clipboard link offered by the pill, so the same link is never offered twice
 };
 
 export type Saved = {
@@ -69,6 +73,8 @@ type State = {
 const DEFAULTS: Settings = {
   onboarded: false,
   saveTo: 'photos',
+  albumName: 'Media Downloader',
+  saveNsfwToPrivate: false,
   sortBySource: true,
   watchClipboard: true,
   askBulk: true,
@@ -141,7 +147,7 @@ export const hideToast = () => set({ toast: null });
 // ---------- folders ----------
 
 export function folderKey(source: string, nsfw: boolean, s = state.settings) {
-  return nsfw ? 'Private' : s.sortBySource ? source : 'All';
+  return (s.saveNsfwToPrivate && nsfw) ? 'Private' : s.sortBySource ? source : 'All';
 }
 
 export function folderDir(key: string) {
@@ -151,9 +157,11 @@ export function folderDir(key: string) {
 export const folderName = (k: string) => (k === 'All' ? 'All downloads' : k === 'Private' ? 'Private (NSFW)' : k);
 
 /** Human-readable location shown in the UI. */
-export function folderLabel(key: string, saveTo: SaveTo = state.settings.saveTo) {
-  if (key !== 'Private' && saveTo === 'photos') return 'Photos › Media Downloader';
-  if (key !== 'Private' && saveTo === 'folder') return `Device › ${state.settings.folderName ?? 'chosen folder'}`;
+export function folderLabel(key: string, saveTo?: SaveTo, albumName?: string) {
+  const effectiveSaveTo = saveTo ?? (key === 'Private' ? (state.settings.saveNsfwToPrivate ? 'files' : state.settings.saveTo) : state.settings.saveTo);
+  const gallery = Platform.OS === 'ios' ? 'Photos' : 'Gallery';
+  if (effectiveSaveTo === 'photos') return `${gallery} › ${albumName || state.settings.albumName || 'Media Downloader'}`;
+  if (effectiveSaveTo === 'folder') return `Device › ${state.settings.folderName ?? 'chosen folder'}`;
   return 'Files › MediaDL' + (key === 'All' ? '' : key === 'Private' ? '/.private' : '/' + key);
 }
 
@@ -163,7 +171,12 @@ const pad = (n: number) => String(n).padStart(2, '0');
 const MAX_PARALLEL = 2;
 let jobSeq = 0;
 
-export function enqueue(post: Post, indexes: number[], saveTo: SaveTo = state.settings.saveTo, albumName?: string) {
+export function enqueue(
+  post: Post,
+  indexes: number[],
+  saveTo: SaveTo = state.settings.saveTo,
+  albumName: string = state.settings.albumName || 'Media Downloader'
+) {
   const jobs: Job[] = indexes.map((i) => ({
     id: `j${++jobSeq}`,
     name: `${post.source.toLowerCase()}_${post.slug}_${pad(i + 1)}.${post.items[i].fmt.toLowerCase()}`,
@@ -239,38 +252,48 @@ export async function getPhotoAlbums(): Promise<string[]> {
   }
 }
 
-async function saveToPhotos(uri: string, albumName = 'Media Downloader') {
-  if (!(await requestPhotos())) throw new Error('Gallery access denied. Saved to the app folder instead.');
+/** Saves into the gallery album and returns the gallery copy's URI (used by History and the viewer). */
+async function saveToPhotos(uri: string, albumName = state.settings.albumName || 'Media Downloader'): Promise<string> {
+  if (!(await requestPhotos())) throw new Error('Gallery access denied.');
   if (!hasNextLibrary()) {
     const legacy = await legacyLibrary();
     const asset = await legacy.createAssetAsync(uri);
     const target = await legacy.getAlbumAsync(albumName).catch(() => null);
     if (target) await legacy.addAssetsToAlbumAsync(asset, target, true);
     else await legacy.createAlbumAsync(albumName, asset, true);
-    return;
+    return asset.uri;
   }
   const MediaLibrary = await import('expo-media-library');
   if (albumName === 'Media Downloader') album ??= await MediaLibrary.Album.get(albumName);
   else if (!albums.has(albumName)) albums.set(albumName, await MediaLibrary.Album.get(albumName));
   const target = albumName === 'Media Downloader' ? album : albums.get(albumName);
-  if (target) return void (await MediaLibrary.Asset.create(uri, target));
+  if (target) return (await MediaLibrary.Asset.create(uri, target)).getUri();
   const asset = await MediaLibrary.Asset.create(uri);
   if (albumName === 'Media Downloader') album = await MediaLibrary.Album.create(albumName, [asset]);
   else albums.set(albumName, await MediaLibrary.Album.create(albumName, [asset]));
+  return asset.getUri();
 }
 
 /** Copies a finished download into the device folder the user picked (Android folder picker, persistent access). */
-async function saveToFolder(file: File) {
+async function saveToFolder(file: File, fmt: string): Promise<string> {
   const uri = state.settings.folderUri;
-  if (!uri) throw new Error('No device folder chosen. Saved to the app folder instead.');
-  await file.copy(new Directory(uri));
+  if (!uri) throw new Error('No device folder chosen.');
+  const out = new Directory(uri).createFile(file.name, MIME[fmt] ?? null);
+  await file.copy(out, { overwrite: true });
+  return out.uri;
 }
+
+// Gallery / device-folder downloads land here first and are moved out; only the app-folder choice keeps files in the app.
+const TEMP = new Directory(Paths.cache, 'incoming');
+const MIME: Record<string, string> = { JPG: 'image/jpeg', PNG: 'image/png', WEBP: 'image/webp', HEIC: 'image/heic', GIF: 'image/gif', MP4: 'video/mp4', MOV: 'video/quicktime', WEBM: 'video/webm', M4V: 'video/x-m4v' };
 
 async function run(job: Job) {
   patchJob(job.id, { status: 'running', startedAt: Date.now() });
   const { post, item } = job;
   const key = folderKey(post.source, post.nsfw);
-  const dir = folderDir(key);
+  // The Private folder and the app-folder setting are the only places files stay inside the app.
+  const keepInApp = key === 'Private' || job.saveTo === 'files';
+  const dir = keepInApp ? folderDir(key) : TEMP;
   let lastAt = 0;
   try {
     dir.create({ intermediates: true, idempotent: true });
@@ -287,18 +310,32 @@ async function run(job: Job) {
         }
       },
     });
+    const bytes = file.size;
     let warning: string | undefined;
-    if (job.saveTo === 'photos') await saveToPhotos(file.uri, job.albumName).catch((e: Error) => (warning = e.message));
-    if (!post.nsfw && job.saveTo === 'folder')
-      await saveToFolder(file).catch((e: Error) => (warning = `Couldn't copy to ${state.settings.folderName ?? 'your folder'}: ${e.message}`));
+    let finalUri = file.uri;
+    let savedTo = keepInApp ? 'files' as SaveTo : job.saveTo;
+    if (!keepInApp) {
+      try {
+        finalUri = job.saveTo === 'folder' ? await saveToFolder(file, item.fmt) : await saveToPhotos(file.uri, job.albumName);
+        file.delete();
+      } catch (e) {
+        // Don't lose the download: keep it in the app folder and say why.
+        const home = folderDir(key);
+        home.create({ intermediates: true, idempotent: true });
+        await file.move(home);
+        finalUri = file.uri;
+        savedTo = 'files';
+        warning = `${(e as Error).message} Kept in the app folder instead.`;
+      }
+    }
     const saved: Saved = {
       id: job.id + '_' + Date.now(),
       name: file.name,
-      uri: file.uri,
+      uri: finalUri,
       thumb: item.thumb,
       type: item.type,
       fmt: item.fmt,
-      bytes: file.size,
+      bytes,
       w: item.w,
       h: item.h,
       dur: item.dur,
@@ -307,15 +344,15 @@ async function run(job: Job) {
       nsfw: post.nsfw,
       postUrl: post.url,
       savedAt: Date.now(),
-      saveTo: job.saveTo,
+      saveTo: savedTo,
     };
     set((s) => ({
       history: [saved, ...s.history],
-      jobs: s.jobs.map((j) => (j.id === job.id ? { ...j, status: 'done', written: file.size, total: file.size } : j)),
+      jobs: s.jobs.map((j) => (j.id === job.id ? { ...j, status: 'done', written: bytes, total: bytes } : j)),
     }));
     if (warning) showToast(warning);
     else if (!state.jobs.some((j) => j.status === 'waiting' || j.status === 'running'))
-      showToast(`Downloads finished. Saved to ${folderLabel(key, job.saveTo)}`);
+      showToast(`Downloads finished. Saved to ${folderLabel(key, savedTo, job.albumName)}`);
   } catch (e) {
     patchJob(job.id, { status: 'failed', error: (e as Error).message });
   }

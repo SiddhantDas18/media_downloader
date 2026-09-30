@@ -10,7 +10,7 @@ import { Press } from '@/components/ui';
 import { F, T } from '@/constants/theme';
 import { fmtOf, parseInput, sourceOf } from '@/lib/extract';
 import { syncBubble } from '@/lib/bubble';
-import { useApp } from '@/lib/store';
+import { getSettings, updateSettings, useApp } from '@/lib/store';
 
 const INITIALS: Record<string, string> = { Reddit: 'RD', Instagram: 'IG', X: 'X', TikTok: 'TT', Facebook: 'FB', Tumblr: 'TB', Pinterest: 'PN', Web: '↓' };
 const open = (url: string) => router.push({ pathname: '/preview', params: { url } });
@@ -32,27 +32,24 @@ export function LinkPill() {
   const watch = useApp((s) => s.settings.watchClipboard);
   const ready = !!useRootNavigationState()?.key;
   const insets = useSafeAreaInsets();
-  // iOS: reading the clipboard shows the paste prompt, so the pill only knows *that* a link is there until tapped.
-  const [pill, setPill] = useState<{ url?: string; source?: string } | null>(null);
-  const lastUrl = useRef<string | null>(null);
+  const [pill, setPill] = useState<{ url: string; source: string } | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     if (!ready) return;
-    const show = (p: { url?: string; source?: string }) => {
+    const show = (p: { url: string; source: string }) => {
       setPill(p);
       clearTimeout(hideTimer.current);
       hideTimer.current = setTimeout(() => setPill(null), 8000);
     };
+    // Only a link we can download, and only once: the last offered link is saved, so it isn't offered again after
+    // returning to the app or restarting it. On iOS, hasUrlAsync() is checked first so plain text never triggers a read.
     const checkClipboard = async () => {
       if (!watch) return;
-      if (Platform.OS === 'ios') {
-        if (await Clipboard.hasUrlAsync()) show({});
-        return;
-      }
+      if (Platform.OS === 'ios' && !(await Clipboard.hasUrlAsync())) return;
       const hit = supported(await Clipboard.getStringAsync());
-      if (!hit || hit.url === lastUrl.current) return;
-      lastUrl.current = hit.url;
+      if (!hit || hit.url === getSettings().lastClip) return;
+      updateSettings({ lastClip: hit.url });
       show(hit);
     };
     const checkShared = () => {
@@ -82,26 +79,23 @@ export function LinkPill() {
   }, [ready, watch]);
 
   if (!pill) return null;
-  const go = async () => {
+  const go = () => {
     setPill(null);
-    const hit = pill.url ? pill : supported((await Clipboard.getStringAsync()) ?? '');
-    if (hit?.url) open(hit.url);
+    open(pill.url);
   };
-  const label = pill.source ? `${pill.source} link copied` : 'Link copied';
+  const label = pill.source === 'Web' ? 'Media link copied' : `${pill.source} link copied`;
 
   return (
     <Animated.View entering={SlideInUp.duration(180)} exiting={FadeOutUp.duration(180)} style={[styles.wrap, { top: insets.top + 6 }]} pointerEvents="box-none">
       <Press accessibilityRole="button" accessibilityLabel={`${label}. Download`} onPress={go} scaleTo={0.97} style={styles.pill}>
         <View style={styles.chip}>
-          <Text style={styles.chipText}>{INITIALS[pill.source ?? 'Web'] ?? '↓'}</Text>
+          <Text style={styles.chipText}>{INITIALS[pill.source] ?? '↓'}</Text>
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={styles.title}>{label}</Text>
-          {pill.url ? (
-            <Text numberOfLines={1} style={styles.url}>
-              {pill.url.replace(/^https?:\/\/(www\.)?/, '')}
-            </Text>
-          ) : null}
+          <Text numberOfLines={1} style={styles.url}>
+            {pill.url.replace(/^https?:\/\/(www\.)?/, '')}
+          </Text>
         </View>
         <View style={styles.cta}>
           <Text style={styles.ctaText}>Download</Text>

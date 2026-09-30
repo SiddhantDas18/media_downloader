@@ -40,10 +40,22 @@ export default function Viewer() {
   ];
 
   const remove = () =>
-    Alert.alert('Delete this file?', `${item.name} will be removed from the app. Copies in your photo library are kept.`, [
+    Alert.alert('Delete this file?', `${item.name} will be removed from the app history.`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: () => (router.back(), deleteSaved(item.id)) },
     ]);
+
+  const share = async () => {
+    let shareUri = item.uri;
+    if (shareUri.startsWith('ph://')) {
+      try {
+        const ML = await import('expo-media-library');
+        const info = await ML.getAssetInfoAsync(item.uri);
+        if (info?.localUri) shareUri = info.localUri;
+      } catch {}
+    }
+    await Sharing.shareAsync(shareUri);
+  };
 
   return (
     <SafeAreaView edges={['top']} style={{ flex: 1, backgroundColor: '#000' }}>
@@ -64,7 +76,7 @@ export default function Viewer() {
           ))}
         </ScrollView>
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-          <Btn label="Share" onPress={() => Sharing.shareAsync(item.uri)} style={{ flex: 1 }} />
+          <Btn label="Share" onPress={share} style={{ flex: 1 }} />
           <Btn label="Folder" kind="raised" onPress={() => router.push(`/folder/${item.folder}`)} style={{ flex: 1, backgroundColor: '#262626' }} />
           <Btn label="Delete" kind="raised" color={T.danger} onPress={remove} style={{ flex: 1, backgroundColor: '#262626' }} />
         </View>
